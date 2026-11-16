@@ -11,7 +11,7 @@
 #     OPT        optimisation flags (default: -Os)
 #     PORT       serial port for flashing (default: /dev/ttyUSB0)
 #     BAUD       download baud rate (default: 2000000)
-#     SECBOOT    path to w800_secboot.img, only needed for `make fls`
+#     SECBOOT    path to w800_secboot.img, only needed for `make fls` (BOOT=secboot only)
 #     BOOT       secboot (default) or iot: which bootloader's flash layout to target
 #
 # Targets: all (elf/bin/img), fls, flash, flash-fls, monitor, size, disasm, clean
@@ -88,7 +88,15 @@ all: $(IMG) size
 $(BUILD):
 	@mkdir -p $@
 
-$(LDSCRIPT): $(W80X_DIR)/w80x.ld $(MAKEFILE_LIST) | $(BUILD)
+# Image layout of the last build. Rewritten only when BOOT/IMG_* change, so
+# switching BOOT relinks and rebuilds the image instead of reusing the old one.
+LAYOUT := $(BUILD)/layout.txt
+LAYOUT_NOW := header=$(IMG_HEADER_ADDR) run=$(IMG_RUN_ADDR) upd=$(IMG_UPD_ADDR) version=$(IMG_VERSION)
+ifneq ($(LAYOUT_NOW),$(shell cat $(LAYOUT) 2>/dev/null))
+  $(shell mkdir -p $(BUILD) && echo '$(LAYOUT_NOW)' > $(LAYOUT))
+endif
+
+$(LDSCRIPT): $(W80X_DIR)/w80x.ld $(MAKEFILE_LIST) $(LAYOUT) | $(BUILD)
 	$(CC) -E -P -undef -x c -DIMG_RUN_ADDR=$(IMG_RUN_ADDR) $< -o $@
 
 $(BUILD)/%.o: %.c | $(BUILD)
@@ -103,12 +111,14 @@ $(ELF): $(OBJS) $(LDSCRIPT)
 $(BIN): $(ELF)
 	$(OBJCOPY) -O binary $< $@
 
-$(IMG): $(BIN)
+$(IMG): $(BIN) $(LAYOUT)
 	$(PYTHON) $(TOOLS_DIR)/w80x_img.py img $< -o $@ \
 	    --header $(IMG_HEADER_ADDR) --run $(IMG_RUN_ADDR) --upd $(IMG_UPD_ADDR) --version $(IMG_VERSION)
 
 fls: $(FLS)
 $(FLS): $(IMG)
+	@test "$(BOOT)" = secboot || { echo "make fls is for BOOT=secboot only. With BOOT=iot, install the wm_iot_sdk"; \
+	    echo "bootloader once by flashing a wm_iot_sdk .fls, then use 'make BOOT=iot flash' (.img only)"; exit 1; }
 	@test -n "$(SECBOOT)" || { echo "Set SECBOOT=/path/to/w800_secboot.img (from the WinnerMicro SDK)"; exit 1; }
 	$(PYTHON) $(TOOLS_DIR)/w80x_img.py fls $(SECBOOT) $< -o $@
 

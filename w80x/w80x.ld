@@ -32,6 +32,7 @@ MEMORY
 ENTRY(Reset_Handler)
 
 __stack_size = DEFINED(__stack_size) ? __stack_size : 0x1000;
+__noinit_size = DEFINED(__noinit_size) ? __noinit_size : 0x400;
 
 SECTIONS
 {
@@ -90,10 +91,28 @@ SECTIONS
         end = .;
     } > RAM
 
-    __heap_start = __bss_end;
+    /*
+     * Not loaded or cleared by startup (W80X_NOINIT in w80x.h). Placed at the
+     * top of RAM, just below the stack, in a fixed __noinit_size block. On a
+     * W801 the bootloader overwrites low RAM during a watchdog reset but
+     * keeps everything from 0x20016000 up: checked with the classic secboot
+     * (cjacker/wm_sdk_w80x tools/w800 @197ad91) and the wm_iot_sdk bootloader
+     * (examples/confirm_reset_values, docs/mcu/clock.md). A fixed address
+     * also keeps the data in place when a new build changes .data/.bss.
+     */
     __stack_top  = ORIGIN(RAM) + LENGTH(RAM);
-    __heap_end   = __stack_top - __stack_size;
-    ASSERT(__heap_start <= __heap_end, "RAM overflow: .data + .bss + stack do not fit")
+    .noinit (__stack_top - __stack_size - __noinit_size) (NOLOAD) :
+    {
+        __noinit_start = .;
+        *(.noinit .noinit.*)
+        . = ALIGN(4);
+        __noinit_end = .;
+    } > RAM
+    ASSERT(__noinit_end <= __stack_top - __stack_size, "W80X_NOINIT data is larger than __noinit_size")
+
+    __heap_start = __end;
+    __heap_end   = __noinit_start;
+    ASSERT(__heap_start <= __heap_end, "RAM overflow: .data + .bss + noinit + stack do not fit")
 
     /DISCARD/ : { *(.note.GNU-stack) *(.gnu_debuglink) *(.comment) *(.eh_frame) }
 }

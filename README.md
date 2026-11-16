@@ -16,6 +16,9 @@ no vendor blobs needed to build.
 > needed. Until then, check the pins and the linker script's flash end
 > (2 MB) for your part.
 
+Register-level documentation, written as an English datasheet, is in
+[`docs/`](docs/README.md).
+
 ## Layout
 
 ```
@@ -51,6 +54,7 @@ examples/              written for the HLK-W801-KIT-V1.1 (see "Board" below)
   timer/               1 ms and 250 ms timer interrupts, timer_delay_ms() checked against them
   crypto/              self-test of every crypto algorithm against standard test vectors, with speeds
   spi/                 SPI loopback self-test (one wire PA7-PB3): lengths, modes, clocks, throughput
+  confirm_reset_values/ reads registers before any init and compares them with the manual's reset values
   sd_fatfs/            SD card over SPI with FatFs: card info, file write/read/verify, speeds, long names
   lib/                 code shared by examples (not built on its own)
     fatfs/             FatFs R0.16 (ChaN) + diskio_sdcard.c glue; fatfs.mk
@@ -133,6 +137,13 @@ these mirrors:
   (linked from the [wm_iot_sdk Linux guide](https://github.com/winnermicro/wm_iot_sdk/blob/master/docs/zh_CN/get_started/linux.rst))
 - wm_sdk_w80x releases: <https://github.com/cjacker/wm_sdk_w80x/releases/download/init/csky-elfabiv2-tools-x86_64-minilibc-20210423.tar.gz>
 
+Newer builds of the same toolchain (still GCC 6.3, prefix `csky-elfabiv2-`)
+are collected in
+[Taixin-Semiconductor/XuanTie-CSKY-Toolchains](https://github.com/Taixin-Semiconductor/XuanTie-CSKY-Toolchains):
+the `20250328` vendor release for Linux x86_64 and Windows (MinGW), plus
+macOS arm64 packages (a native build, and one that runs the Linux binaries).
+The release assets come with SHA-256 sums. Extract them the same way as below.
+
 The tarball has no top-level directory, so extract it into its own folder:
 
 ```sh
@@ -189,7 +200,7 @@ cd examples/blink
 make                              # -> build/blink.elf, .bin, .img
 make flash PORT=/dev/ttyUSB0      # auto-reset via RTS, 2 Mbaud download
 make flash BAUD=115200            # if the high-speed download is unreliable
-make monitor                      # serial console @115200 on UART0
+make monitor                      # serial console @115200 on UART0 (typed keys are sent; Ctrl-C quits)
 ```
 
 `make` at the top level builds every example.
@@ -245,6 +256,57 @@ Its output is byte-identical to the vendor `wm_tool` (checked against
   be flashed.
 
 `python3 tools/w80x_img.py info build/blink.img` dumps and verifies headers.
+
+### Building wm_iot_sdk examples
+
+To build the official [wm_iot_sdk](https://github.com/winnermicro/wm_iot_sdk)
+examples next to this SDK (for example to compare its bootloader with
+secboot), these changes were needed. They were tested with wm_iot_sdk commit
+`e0e4a72` (2024-12-04), CMake 4.2 and the `csky-elfabiv2` 20210423 toolchain:
+
+1. **Toolchain:** wm_iot_sdk needs the vendor `csky-elfabiv2-` GCC
+   ([Option B](#option-b-the-vendor-toolchain-csky-elfabiv2-)). Xuantie-800
+   GCC 13 has a different prefix.
+2. **Python venv:** create one with the SDK's requirements:
+   ```sh
+   python3 -m venv $WM_IOT_SDK_PATH/venv
+   $WM_IOT_SDK_PATH/venv/bin/pip install -r $WM_IOT_SDK_PATH/tools/wm/requirements.txt
+   ```
+3. **PATH:** `wm.py` runs its helper scripts (`wmdt.py` and others) as
+   `python3` from `PATH`. So the venv and the toolchain must both be on `PATH`,
+   or configuring fails with `No module named 'tomlkit'`:
+   ```sh
+   export WM_IOT_SDK_PATH=/path/to/wm_iot_sdk
+   export PATH=$WM_IOT_SDK_PATH/venv/bin:/path/to/csky-elfabiv2/bin:$PATH
+   cd $WM_IOT_SDK_PATH/examples/hello_world && python3 $WM_IOT_SDK_PATH/tools/wm/wm.py build
+   ```
+4. **CMake 4.x link fix:** the SDK replaces CMake's link rule with one that
+   has no `<LINK_FLAGS>` placeholder. CMake 4.x passes the SDK's link flags
+   through that placeholder, so the link step gets no `-mcpu=ck804ef
+   -mhard-float -nostartfiles`. gcc then links for its default CPU (ck810),
+   and the build fails with `arch flag ck803 conflict with target ck810`.
+   Add `<LINK_FLAGS>` to both rules in `tools/cmake/compile.cmake`:
+   ```diff
+   -    set(CMAKE_C_LINK_EXECUTABLE "<CMAKE_C_COMPILER> <CMAKE_C_LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+   -    set(CMAKE_CXX_LINK_EXECUTABLE "<CMAKE_CXX_COMPILER> <CMAKE_CXX_LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+   +    set(CMAKE_C_LINK_EXECUTABLE "<CMAKE_C_COMPILER> <CMAKE_C_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+   +    set(CMAKE_CXX_LINK_EXECUTABLE "<CMAKE_CXX_COMPILER> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+   ```
+   Older CMake versions leave `<LINK_FLAGS>` empty here, so the fix is safe
+   with them too. Linking `libgcc.a` by hand or using a custom specs file is
+   not needed: with the right `-mcpu`, gcc finds the right libgcc.
+5. **Flashing changes the boot layout:** the wm_iot_sdk `.fls` replaces
+   secboot with the wm_iot_sdk bootloader at `0x08002000`, a partition table at
+   `0x0800E000` and the app at `0x0800F000`. After that, flash this SDK's
+   examples with `make BOOT=iot flash` (the `.img` only: `SECBOOT` and
+   `make fls` are for the classic secboot, and `make BOOT=iot fls` is
+   refused). Changing `BOOT` rebuilds the image; `confirm_reset_values`
+   prints which layout it was linked for. To go back, flash the secboot `.fls`
+   (`make fls SECBOOT=... && make flash-fls`).
+6. **Hardware notes depend on the bootloader:** everything in
+   [docs/](docs/README.md) tagged *(hardware)* was read with the cjacker
+   secboot. Run `examples/confirm_reset_values` (built with `BOOT=iot`) to see
+   what the wm_iot_sdk bootloader leaves in the registers and RAM.
 
 ## API at a glance
 
@@ -491,6 +553,12 @@ A common entry in `startup.S` saves every register a C function may clobber,
 FPU included, and calls the handler. GCC 13's own `__attribute__((isr))` is
 not used: it leaves r18-r31 and the FPU registers unsaved, so a handler that
 calls a function silently corrupts the code it interrupted.
+Define `void w80x_early_init(void)` to run code right after reset, before
+startup sets up `.data`/`.bss` and calls `SystemInit()`. Only `const` data and
+variables marked `W80X_NOINIT` can be used there. `.noinit` variables (1 KB at the top of RAM, below the stack) are never
+loaded or cleared by startup, and keep their value across a watchdog reset.
+Power-on and the RESET button lose them, so guard them with a magic value
+(see `examples/confirm_reset_values`).
 Define `void w80x_fault_hook(uint32_t vec, uint32_t epc, uint32_t epsr)` to
 report CPU exceptions (by default they just hang in `Default_Handler`).
 

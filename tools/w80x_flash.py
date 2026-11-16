@@ -89,7 +89,7 @@ def query_mac(ser):
     ser.timeout = 1.0
     line = ser.read_until(b"\n", 32).decode(errors="replace").strip()
     print(f"chip says: {line or '(no answer)'}")
-    # ROM answers "Mac:", secboot answers "MAC:". ROM can only take .fls files.
+    # ROM answers "Mac:", secboot answers "MAC:". Both take .img and .fls files.
     return line
 
 
@@ -133,18 +133,48 @@ def xmodem_send(ser, data: bytes):
     sys.exit("\nno ACK for EOT")
 
 
+def _read_keys():
+    """Return the keys typed since the last call (no echo, no Enter needed)."""
+    if os.name == "nt":
+        import msvcrt
+        out = b""
+        while msvcrt.kbhit():
+            out += msvcrt.getwch().encode()
+        return out
+    import select
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return os.read(sys.stdin.fileno(), 64)
+    return b""
+
+
 def monitor(ser, baud):
+    """Serial terminal: prints what the chip sends and sends typed keys."""
     ser.baudrate = baud
-    ser.timeout = 0.1
-    print(f"--- monitor @ {baud} baud, Ctrl-C to quit ---")
+    ser.timeout = 0.02
+    interactive = sys.stdin.isatty()
+    print(f"--- monitor @ {baud} baud, Ctrl-C to quit"
+          f"{', keys are sent to the chip' if interactive else ''} ---")
+    saved = None
+    if interactive and os.name != "nt":
+        import termios
+        import tty
+        saved = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin)     # keys sent one at a time; Ctrl-C still quits
     try:
         while True:
             d = ser.read(256)
             if d:
                 sys.stdout.write(d.decode(errors="replace"))
                 sys.stdout.flush()
+            if interactive:
+                k = _read_keys()
+                if k:
+                    ser.write(k.replace(b"\n", b"\r"))
     except KeyboardInterrupt:
         print()
+    finally:
+        if saved is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, saved)
 
 
 def main():
@@ -179,7 +209,13 @@ def main():
     sync(ser)
     who = query_mac(ser)
     if who.startswith("Mac:") and not is_fls:
-        sys.exit("chip is in ROM mode (no secboot): flash a .fls image instead (make fls)")
+        # The ROM takes .img files too (wm_iot_sdk's flash.py sends its
+        # bootloader, partition table and app as .img files). It answers
+        # instead of secboot when there is no secboot, or when the
+        # wm_iot_sdk bootloader is installed (it has no download mode).
+        print("note: ROM download mode (no classic secboot answered). This is expected\n"
+              "      with the wm_iot_sdk bootloader (BOOT=iot). If secboot was erased,\n"
+              "      a BOOT=secboot .img won't start: flash a .fls (make fls) instead.")
 
     if a.erase:
         print("erasing flash...")

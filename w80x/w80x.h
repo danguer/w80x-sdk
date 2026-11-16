@@ -35,6 +35,14 @@ extern "C" {
 
 #define W80X_INLINE  static inline __attribute__((always_inline))
 
+/* Puts a variable in .noinit, a fixed 1 KB block (__noinit_size) at the top
+ * of RAM below the stack. Startup neither loads nor clears it, so
+ * w80x_early_init() can write it before .data/.bss are set up. On a W801 it
+ * keeps its value across a watchdog reset (the bootloader, classic secboot
+ * or wm_iot_sdk, only overwrites low RAM); power-on and the RESET button
+ * lose it (garbage, check a magic). */
+#define W80X_NOINIT  __attribute__((section(".noinit")))
+
 /* Marks interrupt handlers, for readability:  W80X_IRQ void GPIOA_IRQHandler(void) {...}
  * It expands to nothing: handlers are plain C functions called from the
  * common entry in startup.S, which saves and restores all registers. (GCC
@@ -735,6 +743,12 @@ void SystemInit(void);                 /* called from startup before main()  */
 void delay_ticks(uint32_t cpu_cycles); /* busy-wait on CORET                 */
 void delay_us(uint32_t us);
 void delay_ms(uint32_t ms);
+
+/* Weak hook, called first thing after reset, before the vector copy,
+ * .data/.bss setup and SystemInit(): the registers still hold what the
+ * bootloader left. Only W80X_NOINIT variables and const data may be used
+ * here (initialized and zeroed globals are not set up yet). */
+void w80x_early_init(void);
 
 /* Interrupt / exception handlers (weak, override in your code with W80X_IRQ). */
 void Default_Handler(void);

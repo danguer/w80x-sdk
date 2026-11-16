@@ -89,9 +89,16 @@ static void copy_words(uint32_t *dst, const uint32_t *src, const uint32_t *end)
     }
 }
 
+/* Default w80x_early_init(): nothing to do. */
+__attribute__((weak)) void w80x_early_init(void)
+{
+}
+
 /* Called from Reset_Handler with a valid stack; .data/.bss not yet set up. */
 void __attribute__((noreturn, used)) w80x_start(void)
 {
+    w80x_early_init();
+
     /* Vector table copy into SRAM (VBR points there; patchable at runtime). */
     copy_words(__vectors_ram_start, __Vectors, __vectors_ram_end);
     copy_words(__data_start, __data_load, __data_end);
