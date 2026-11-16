@@ -1,0 +1,36 @@
+{
+    "configurations": [
+        {
+            "name": "W80x (C-SKY CK804)",
+            "compilerPath": "/opt/Xuantie-800-gcc-elf-newlib-x86_64/bin/csky-unknown-elf-gcc",
+            "compilerArgs": [
+                "-mcpu=ck804ef",
+                "-mhard-float",
+                "-mistack"
+            ],
+            "intelliSenseMode": "gcc-arm",
+            "cStandard": "gnu11",
+            "includePath": [
+                "${workspaceFolder}/w80x",
+                "${workspaceFolder}/w80x/boards",
+                "${workspaceFolder}/examples/lib/fatfs",
+                "${workspaceFolder}/examples/lib/sdcard"
+            ],
+            "defines": [
+                "__csky__=2",
+                "__CSKYABIV2__=1",
+                "__ck804ef__=1",
+                "__csky_istack__=1",
+                "__CSKY_ISTACK__=1",
+                "__csky_hard_float__=1"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}"
+                ],
+                "limitSymbolsToIncludedHeaders": false
+            }
+        }
+    ],
+    "version": 4
+}
