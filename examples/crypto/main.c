@@ -27,34 +27,35 @@ static int fails;
 
 /* ---- helpers ------------------------------------------------------------- */
 
-static size_t unhex(uint8_t *out, const char *s)
+static size_t unhex(uint8_t *out, const char *hex)
 {
-    size_t n = 0;
-    for (; s[0] && s[1]; s += 2) {
-        uint8_t v = 0;
-        for (int i = 0; i < 2; i++) {
-            char ch = s[i];
-            v = (uint8_t)((v << 4) | ((ch <= '9') ? ch - '0' : (ch | 0x20) - 'a' + 10));
+    size_t count = 0;
+    for (; hex[0] && hex[1]; hex += 2) {
+        uint8_t byte = 0;
+        for (int nibble = 0; nibble < 2; nibble++) {
+            char ch = hex[nibble];
+            byte = (uint8_t)((byte << 4) | ((ch <= '9') ? ch - '0' : (ch | 0x20) - 'a' + 10));
         }
-        out[n++] = v;
+        out[count++] = byte;
     }
-    return n;
+    return count;
 }
 
-static void dump(const uint8_t *p, size_t n)
+static void dump(const uint8_t *data, size_t len)
 {
-    for (size_t i = 0; i < n; i++)
-        printf("%02x", p[i]);
+    for (size_t pos = 0; pos < len; pos++) {
+        printf("%02x", data[pos]);
+    }
 }
 
 static void check_bytes(const char *name, const uint8_t *got, const char *exp_hex)
 {
     static uint8_t exp[64];
-    size_t n = unhex(exp, exp_hex);
-    int ok = memcmp(got, exp, n) == 0;
+    size_t len = unhex(exp, exp_hex);
+    int ok = memcmp(got, exp, len) == 0;
     printf("%-28s %s", name, ok ? "PASS" : "FAIL got ");
     if (!ok) {
-        dump(got, n);
+        dump(got, len);
         fails++;
     }
     printf("\n");
@@ -112,18 +113,18 @@ static void test_hash(void)
     static const char abc[] __attribute__((aligned(4))) = "abc";
     static const char m56[] __attribute__((aligned(4))) =
         "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";   /* 56 bytes: 2-block padding */
-    hash_ctx_t c;
+    hash_ctx_t ctx;
 
     sha1(abc, 3, out);
     check_bytes("SHA1(\"abc\")", out, "a9993e364706816aba3e25717850c26c9cd0d89d");
     sha1(m56, 56, out);
     check_bytes("SHA1(56 bytes)", out, "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
 
-    sha1_init(&c);                                   /* same, fed 1 byte at a time */
-    for (int i = 0; i < 56; i++) {
-        sha1_update(&c, m56 + i, 1);
+    sha1_init(&ctx);                                   /* same, fed 1 byte at a time */
+    for (int pos = 0; pos < 56; pos++) {
+        sha1_update(&ctx, m56 + pos, 1);
     }
-    sha1_final(&c, out);
+    sha1_final(&ctx, out);
     check_bytes("SHA1(56 bytes) bytewise", out, "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
 
     md5(abc, 3, out);
@@ -134,15 +135,15 @@ static void test_hash(void)
 
 static void test_aes(void)
 {
-    cipher_ctx_t c;
+    cipher_ctx_t ctx;
 
     /* FIPS-197 C.1 */
     unhex(key, "000102030405060708090a0b0c0d0e0f");
     unhex(in, "00112233445566778899aabbccddeeff");
-    aes_setup(&c, key, CIPHER_ECB, NULL);
-    cipher_encrypt(&c, in, out, 16);
+    aes_setup(&ctx, key, CIPHER_ECB, NULL);
+    cipher_encrypt(&ctx, in, out, 16);
     check_bytes("AES-128-ECB encrypt", out, "69c4e0d86a7b0430d8cdb78070b4c55a");
-    cipher_decrypt(&c, out, out, 16);
+    cipher_decrypt(&ctx, out, out, 16);
     check_bytes("AES-128-ECB decrypt", out, "00112233445566778899aabbccddeeff");
 
     /* SP 800-38A F.2.1, first two blocks */
@@ -151,17 +152,17 @@ static void test_aes(void)
     unhex(in, "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
     static const char cbc[] = "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2";
 
-    aes_setup(&c, key, CIPHER_CBC, iv);
-    cipher_encrypt(&c, in, out, 32);
+    aes_setup(&ctx, key, CIPHER_CBC, iv);
+    cipher_encrypt(&ctx, in, out, 32);
     check_bytes("AES-128-CBC encrypt", out, cbc);
 
-    aes_setup(&c, key, CIPHER_CBC, iv);              /* IV carried between calls */
-    cipher_encrypt(&c, in, out, 16);
-    cipher_encrypt(&c, in + 16, out + 16, 16);
+    aes_setup(&ctx, key, CIPHER_CBC, iv);              /* IV carried between calls */
+    cipher_encrypt(&ctx, in, out, 16);
+    cipher_encrypt(&ctx, in + 16, out + 16, 16);
     check_bytes("AES-128-CBC in two calls", out, cbc);
 
-    aes_setup(&c, key, CIPHER_CBC, iv);
-    cipher_decrypt(&c, out, out, 32);
+    aes_setup(&ctx, key, CIPHER_CBC, iv);
+    cipher_decrypt(&ctx, out, out, 32);
     check_bytes("AES-128-CBC decrypt", out,
                 "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
 
@@ -169,34 +170,34 @@ static void test_aes(void)
     unhex(iv, "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
     static const char ctr[] = "874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff";
 
-    aes_setup(&c, key, CIPHER_CTR, iv);
-    cipher_encrypt(&c, in, out, 32);
+    aes_setup(&ctx, key, CIPHER_CTR, iv);
+    cipher_encrypt(&ctx, in, out, 32);
     check_bytes("AES-128-CTR encrypt", out, ctr);
 
-    aes_setup(&c, key, CIPHER_CTR, iv);              /* counter carried between calls */
-    cipher_encrypt(&c, in, out, 16);
-    cipher_encrypt(&c, in + 16, out + 16, 16);
+    aes_setup(&ctx, key, CIPHER_CTR, iv);              /* counter carried between calls */
+    cipher_encrypt(&ctx, in, out, 16);
+    cipher_encrypt(&ctx, in + 16, out + 16, 16);
     check_bytes("AES-128-CTR in two calls", out, ctr);
 }
 
 static void test_des(void)
 {
-    cipher_ctx_t c;
+    cipher_ctx_t ctx;
 
     unhex(key, "133457799bbcdff1");
     unhex(in, "0123456789abcdef");
-    des_setup(&c, key, CIPHER_ECB, NULL);
-    cipher_encrypt(&c, in, out, 8);
+    des_setup(&ctx, key, CIPHER_ECB, NULL);
+    cipher_encrypt(&ctx, in, out, 8);
     check_bytes("DES-ECB encrypt", out, "85e813540f0ab405");
 
     unhex(key, "0123456789abcdef23456789abcdef01456789abcdef0123");
     unhex(iv, "0001020304050607");
     memcpy(in, "The quick brown fox jump", 24);
-    des3_setup(&c, key, CIPHER_CBC, iv);
-    cipher_encrypt(&c, in, out, 24);
+    des3_setup(&ctx, key, CIPHER_CBC, iv);
+    cipher_encrypt(&ctx, in, out, 24);
     check_bytes("3DES-CBC encrypt", out, "29b01b011b9ebb6f10308a42938279068782e8bec97fe03f");
-    des3_setup(&c, key, CIPHER_CBC, iv);
-    cipher_decrypt(&c, out, out, 24);
+    des3_setup(&ctx, key, CIPHER_CBC, iv);
+    cipher_decrypt(&ctx, out, out, 24);
     check_ok("3DES-CBC decrypt", memcmp(out, "The quick brown fox jump", 24) == 0);
 }
 
@@ -219,18 +220,18 @@ static int rng_stats(const char *name)
 {
     uint32_t ones = 0, flips = 0, prev = rng_read(), repeats = 0, shifted = 0;
     uint32_t t0 = CPU_TICKS;
-    for (int i = 0; i < 256; i++) {
-        uint32_t w = rng_read();
-        ones += (uint32_t)__builtin_popcount(w);
-        flips += (uint32_t)__builtin_popcount((w ^ (w >> 1)) & 0x7FFFFFFFu);
-        repeats += (w == prev);
-        for (uint32_t k = 1; k <= 16; k++) {       /* >= 16 overlapping bits */
-            if ((prev << k) == (w & ~((1u << k) - 1u))) {
+    for (int sample = 0; sample < 256; sample++) {
+        uint32_t word = rng_read();
+        ones += (uint32_t)__builtin_popcount(word);
+        flips += (uint32_t)__builtin_popcount((word ^ (word >> 1)) & 0x7FFFFFFFu);
+        repeats += (word == prev);
+        for (uint32_t shift = 1; shift <= 16; shift++) {       /* >= 16 overlapping bits */
+            if ((prev << shift) == (word & ~((1u << shift) - 1u))) {
                 shifted++;
                 break;
             }
         }
-        prev = w;
+        prev = word;
     }
     uint32_t cyc = cpu_cycles_since(t0);
     printf("%s: %lu/8192 bits set, %lu/7936 bit flips, %lu repeats, %lu shifted, "
@@ -244,7 +245,7 @@ static void test_rng(void)
 {
     rng_init_analog();
     printf("TRNG analog:");
-    for (int i = 0; i < 4; i++) {
+    for (int word = 0; word < 4; word++) {
         printf(" %08lx", (unsigned long)rng_read());
     }
     printf("\n");
@@ -253,7 +254,7 @@ static void test_rng(void)
 
     rng_init();
     printf("TRNG digital:");
-    for (int i = 0; i < 4; i++) {
+    for (int word = 0; word < 4; word++) {
         printf(" %08lx", (unsigned long)rng_read());
     }
     printf("\n");
@@ -270,22 +271,22 @@ void w80x_fault_hook(uint32_t vec, uint32_t epc, uint32_t epsr)
 static void test_rsa_key(const char *name, uint32_t words, const uint32_t *n,
                          const uint32_t *d, const uint32_t *m, const uint32_t *c)
 {
-    static uint32_t r[RSA_MAX_WORDS];
+    static uint32_t result[RSA_MAX_WORDS];
     static const uint32_t e = 65537;
     uint32_t t0 = ms_ticks;
-    int err = rsa_modexp(r, m, &e, 1, n, words);
+    int err = rsa_modexp(result, m, &e, 1, n, words);
     uint32_t t_pub = ms_ticks - t0;
     char label[32];
     strcpy(label, name);
     strcat(label, " public (m^e)");
-    check_ok(label, !err && (memcmp(r, c, words * 4) == 0));
+    check_ok(label, !err && (memcmp(result, c, words * 4) == 0));
 
     t0 = ms_ticks;
-    err = rsa_modexp(r, c, d, words, n, words);
+    err = rsa_modexp(result, c, d, words, n, words);
     uint32_t t_priv = ms_ticks - t0;
     strcpy(label, name);
     strcat(label, " private (c^d)");
-    check_ok(label, !err && (memcmp(r, m, words * 4) == 0));
+    check_ok(label, !err && (memcmp(result, m, words * 4) == 0));
 
     printf("%s: public %lu ms, private %lu ms\n", name,
            (unsigned long)t_pub, (unsigned long)t_priv);
@@ -307,21 +308,21 @@ static void speed(const char *name, uint32_t cycles, uint32_t bytes)
 
 static void test_speed(void)
 {
-    cipher_ctx_t c;
+    cipher_ctx_t ctx;
     uint32_t t0;
 
-    for (uint32_t i = 0; i < sizeof big; i++) {
-        big[i] = (uint8_t)i;
+    for (uint32_t pos = 0; pos < sizeof big; pos++) {
+        big[pos] = (uint8_t)pos;
     }
     printf("Throughput, %u bytes:\n", (unsigned)sizeof big);
 
     t0 = CPU_TICKS; crc32(big, sizeof big);           speed("CRC-32", cpu_cycles_since(t0), sizeof big);
     t0 = CPU_TICKS; sha1(big, sizeof big, out);       speed("SHA1", cpu_cycles_since(t0), sizeof big);
     t0 = CPU_TICKS; md5(big, sizeof big, out);        speed("MD5", cpu_cycles_since(t0), sizeof big);
-    aes_setup(&c, key, CIPHER_CBC, iv);
-    t0 = CPU_TICKS; cipher_encrypt(&c, big, big, sizeof big); speed("AES-128-CBC", cpu_cycles_since(t0), sizeof big);
-    des3_setup(&c, key, CIPHER_CBC, iv);
-    t0 = CPU_TICKS; cipher_encrypt(&c, big, big, sizeof big); speed("3DES-CBC", cpu_cycles_since(t0), sizeof big);
+    aes_setup(&ctx, key, CIPHER_CBC, iv);
+    t0 = CPU_TICKS; cipher_encrypt(&ctx, big, big, sizeof big); speed("AES-128-CBC", cpu_cycles_since(t0), sizeof big);
+    des3_setup(&ctx, key, CIPHER_CBC, iv);
+    t0 = CPU_TICKS; cipher_encrypt(&ctx, big, big, sizeof big); speed("3DES-CBC", cpu_cycles_since(t0), sizeof big);
 }
 
 int main(void)

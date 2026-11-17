@@ -92,22 +92,22 @@ W80X_INLINE uint32_t gpio_mask(uint8_t pin) { return 1UL << (pin & 31u); }
 /* Read-modify-write helper, safe against interrupts. */
 W80X_INLINE void gpio__rmw(__IO uint32_t *reg, uint32_t clear, uint32_t set)
 {
-    uint32_t p = irq_save();
+    uint32_t psr = irq_save();
     *reg = (*reg & ~clear) | set;
-    irq_restore(p);
+    irq_restore(psr);
 }
 
 /* ---- configuration ---------------------------------------------------- */
 
 W80X_INLINE void gpio_mode(uint8_t pin, uint32_t mode)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t m = gpio_mask(pin);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t mask = gpio_mask(pin);
 
-    gpio__rmw(&g->AF_SEL, m, 0);                                    /* plain GPIO   */
-    gpio__rmw(&g->PULL_EN, m, (mode & GPIO_PULLUP)   ? 0 : m);      /* active low   */
-    gpio__rmw(&g->DN_EN,   m, (mode & GPIO_PULLDOWN) ? m : 0);
-    gpio__rmw(&g->DIR,     m, (mode & GPIO_OUTPUT)   ? m : 0);
+    gpio__rmw(&port->AF_SEL,  mask, 0);                                     /* plain GPIO */
+    gpio__rmw(&port->PULL_EN, mask, (mode & GPIO_PULLUP)   ? 0 : mask);     /* active low */
+    gpio__rmw(&port->DN_EN,   mask, (mode & GPIO_PULLDOWN) ? mask : 0);
+    gpio__rmw(&port->DIR,     mask, (mode & GPIO_OUTPUT)   ? mask : 0);
 }
 
 /* Make the pin a push-pull output at `level`. DATA writes are lost while
@@ -115,35 +115,35 @@ W80X_INLINE void gpio_mode(uint8_t pin, uint32_t mode)
  * changes. */
 W80X_INLINE void gpio_output(uint8_t pin, int level)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t m = gpio_mask(pin);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t mask = gpio_mask(pin);
 
-    gpio__rmw(&g->DATA, m, level ? m : 0);   /* in case it does latch */
+    gpio__rmw(&port->DATA, mask, level ? mask : 0);   /* in case it does latch */
     gpio_mode(pin, GPIO_OUTPUT);
-    gpio__rmw(&g->DATA, m, level ? m : 0);
+    gpio__rmw(&port->DATA, mask, level ? mask : 0);
 }
 
 /* Route the pin to one of its alternate functions (UART, SPI, PWM, ...). */
 W80X_INLINE void gpio_af(uint8_t pin, gpio_af_t af)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t m = gpio_mask(pin);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t mask = gpio_mask(pin);
 
-    gpio__rmw(&g->AF_S0, m, (af & 1u) ? m : 0);
-    gpio__rmw(&g->AF_S1, m, (af & 2u) ? m : 0);
-    gpio__rmw(&g->AF_SEL, 0, m);
+    gpio__rmw(&port->AF_S0, mask, (af & 1u) ? mask : 0);
+    gpio__rmw(&port->AF_S1, mask, (af & 2u) ? mask : 0);
+    gpio__rmw(&port->AF_SEL, 0, mask);
 }
 
 /* Analog function (ADC / touch): AF off, input, pull-up and pull-down off. */
 W80X_INLINE void gpio_analog(uint8_t pin)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t m = gpio_mask(pin);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t mask = gpio_mask(pin);
 
-    gpio__rmw(&g->AF_SEL, m, 0);
-    gpio__rmw(&g->DIR, m, 0);
-    gpio__rmw(&g->PULL_EN, 0, m);
-    gpio__rmw(&g->DN_EN, m, 0);
+    gpio__rmw(&port->AF_SEL, mask, 0);
+    gpio__rmw(&port->DIR, mask, 0);
+    gpio__rmw(&port->PULL_EN, 0, mask);
+    gpio__rmw(&port->DN_EN, mask, 0);
 }
 
 /* ---- data --------------------------------------------------------------- */
@@ -151,24 +151,24 @@ W80X_INLINE void gpio_analog(uint8_t pin)
 W80X_INLINE int  gpio_read(uint8_t pin)  { return (gpio_port(pin)->DATA & gpio_mask(pin)) != 0; }
 W80X_INLINE void gpio_set(uint8_t pin)   { gpio__rmw(&gpio_port(pin)->DATA, 0, gpio_mask(pin)); }
 W80X_INLINE void gpio_clear(uint8_t pin) { gpio__rmw(&gpio_port(pin)->DATA, gpio_mask(pin), 0); }
-W80X_INLINE void gpio_write(uint8_t pin, int v)
+W80X_INLINE void gpio_write(uint8_t pin, int level)
 {
-    uint32_t m = gpio_mask(pin);
-    gpio__rmw(&gpio_port(pin)->DATA, m, v ? m : 0);
+    uint32_t mask = gpio_mask(pin);
+    gpio__rmw(&gpio_port(pin)->DATA, mask, level ? mask : 0);
 }
 W80X_INLINE void gpio_toggle(uint8_t pin)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t p = irq_save();
-    g->DATA ^= gpio_mask(pin);
-    irq_restore(p);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t psr = irq_save();
+    port->DATA ^= gpio_mask(pin);
+    irq_restore(psr);
 }
 
 /* Whole-port access: only bits in `mask` are changed. */
-W80X_INLINE uint32_t gpio_port_read(GPIO_TypeDef *g) { return g->DATA; }
-W80X_INLINE void gpio_port_write(GPIO_TypeDef *g, uint32_t mask, uint32_t value)
+W80X_INLINE uint32_t gpio_port_read(GPIO_TypeDef *port) { return port->DATA; }
+W80X_INLINE void gpio_port_write(GPIO_TypeDef *port, uint32_t mask, uint32_t value)
 {
-    gpio__rmw(&g->DATA, mask, value & mask);
+    gpio__rmw(&port->DATA, mask, value & mask);
 }
 
 /* ---- interrupts ----------------------------------------------------------- */
@@ -177,25 +177,25 @@ W80X_INLINE void gpio_port_write(GPIO_TypeDef *g, uint32_t mask, uint32_t value)
  * You still need irq_enable(GPIOA_IRQn / GPIOB_IRQn) and __enable_irq(). */
 W80X_INLINE void gpio_irq_enable(uint8_t pin, gpio_irq_t trig)
 {
-    GPIO_TypeDef *g = gpio_port(pin);
-    uint32_t m = gpio_mask(pin);
+    GPIO_TypeDef *port = gpio_port(pin);
+    uint32_t mask = gpio_mask(pin);
     int level = (trig == GPIO_IRQ_HIGH) || (trig == GPIO_IRQ_LOW);
     int both  = (trig == GPIO_IRQ_BOTH);
     int high  = (trig == GPIO_IRQ_RISING) || (trig == GPIO_IRQ_HIGH);
 
-    gpio__rmw(&g->IE,  m, 0);
-    gpio__rmw(&g->IS,  m, level ? m : 0);
-    gpio__rmw(&g->IBE, m, both  ? m : 0);
-    gpio__rmw(&g->IEV, m, high  ? m : 0);
-    g->IC = m;                                   /* drop stale status */
-    gpio__rmw(&g->IE,  0, m);
+    gpio__rmw(&port->IE,  mask, 0);
+    gpio__rmw(&port->IS,  mask, level ? mask : 0);
+    gpio__rmw(&port->IBE, mask, both  ? mask : 0);
+    gpio__rmw(&port->IEV, mask, high  ? mask : 0);
+    port->IC = mask;                             /* drop stale status */
+    gpio__rmw(&port->IE,  0, mask);
 }
 
 W80X_INLINE void     gpio_irq_disable(uint8_t pin) { gpio__rmw(&gpio_port(pin)->IE, gpio_mask(pin), 0); }
 W80X_INLINE int      gpio_irq_pending(uint8_t pin) { return (gpio_port(pin)->MIS & gpio_mask(pin)) != 0; }
 W80X_INLINE void     gpio_irq_clear(uint8_t pin)   { gpio_port(pin)->IC = gpio_mask(pin); }
-W80X_INLINE uint32_t gpio_irq_status(GPIO_TypeDef *g)           { return g->MIS; }
-W80X_INLINE void     gpio_irq_clear_mask(GPIO_TypeDef *g, uint32_t m) { g->IC = m; }
+W80X_INLINE uint32_t gpio_irq_status(GPIO_TypeDef *port)                    { return port->MIS; }
+W80X_INLINE void     gpio_irq_clear_mask(GPIO_TypeDef *port, uint32_t mask) { port->IC = mask; }
 
 #ifdef __cplusplus
 }

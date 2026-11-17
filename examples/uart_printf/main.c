@@ -57,14 +57,14 @@ int main(void)
     uint32_t seconds = 0;
     for (;;) {
         /* ~1 s, checking for keys every 10 ms */
-        for (int t = 0; t < 100; t++) {
-            int c = uart_try_getc(UART0);
-            if ((c == '+') && (speed > 0)) {
+        for (int poll = 0; poll < 100; poll++) {
+            int ch = uart_try_getc(UART0);
+            if ((ch == '+') && (speed > 0)) {
                 set_speed(--speed);
-            } else if ((c == '-') && (speed < (NSPEEDS - 1))) {
+            } else if ((ch == '-') && (speed < (NSPEEDS - 1))) {
                 set_speed(++speed);
-            } else if (c >= 0) {
-                printf("key '%c' = 0x%02X\n", ((c >= 32) && (c < 127)) ? c : '?', c);
+            } else if (ch >= 0) {
+                printf("key '%c' = 0x%02X\n", ((ch >= 32) && (ch < 127)) ? ch : '?', ch);
             }
             delay_ms(10);
         }

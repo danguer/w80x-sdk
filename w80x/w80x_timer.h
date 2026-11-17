@@ -58,9 +58,9 @@ extern "C" {
 /* Read-modify-write TMR_CSR without touching other timers' flags. */
 W80X_INLINE void timer__csr(uint32_t clear, uint32_t set)
 {
-    uint32_t p = irq_save();
+    uint32_t psr = irq_save();
     TIMER->CSR = (TIMER->CSR & ~(TIMER_CSR_IF_ALL | clear)) | set;
-    irq_restore(p);
+    irq_restore(psr);
 }
 
 /* Prescaler for a 1 us tick from the current APB clock. */
@@ -128,27 +128,28 @@ W80X_INLINE void timer_irq_disable(uint32_t id) { timer__csr(TIMER_CSR_IE(id), 0
 /* Timers whose flag is set, as a mask: bit n = timer n. */
 W80X_INLINE uint32_t timer_irq_status(void)
 {
-    uint32_t csr = TIMER->CSR, m = 0;
-    for (uint32_t n = 0; n < TIMER_NUM; n++) {
-        if (csr & TIMER_CSR_IF(n)) {
-            m |= BIT(n);
+    uint32_t csr = TIMER->CSR;
+    uint32_t pending = 0;
+    for (uint32_t id = 0; id < TIMER_NUM; id++) {
+        if (csr & TIMER_CSR_IF(id)) {
+            pending |= BIT(id);
         }
     }
-    return m;
+    return pending;
 }
 
 /* Clear flags for the timers in mask (bit n = timer n). */
 W80X_INLINE void timer_irq_clear(uint32_t mask)
 {
-    uint32_t f = 0;
-    for (uint32_t n = 0; n < TIMER_NUM; n++) {
-        if (mask & BIT(n)) {
-            f |= TIMER_CSR_IF(n);
+    uint32_t flags = 0;
+    for (uint32_t id = 0; id < TIMER_NUM; id++) {
+        if (mask & BIT(id)) {
+            flags |= TIMER_CSR_IF(id);
         }
     }
-    uint32_t p = irq_save();
-    TIMER->CSR = (TIMER->CSR & ~TIMER_CSR_IF_ALL) | f;
-    irq_restore(p);
+    uint32_t psr = irq_save();
+    TIMER->CSR = (TIMER->CSR & ~TIMER_CSR_IF_ALL) | flags;
+    irq_restore(psr);
 }
 
 W80X_INLINE int timer_expired(uint32_t id) { return (TIMER->CSR & TIMER_CSR_IF(id)) != 0; }
@@ -157,13 +158,13 @@ W80X_INLINE int timer_expired(uint32_t id) { return (TIMER->CSR & TIMER_CSR_IF(i
 
 /* Wait for a one-shot run of the delay timer. It stops itself when the time
  * is up (manual 19.4.3); the flag check is a second way out. */
-W80X_INLINE void timer__delay(uint32_t n, uint32_t unit)
+W80X_INLINE void timer__delay(uint32_t period, uint32_t unit)
 {
-    if (!n) {
+    if (!period) {
         return;
     }
     timer_init();
-    timer_start(TIMER_DELAY_ID, n, unit | TIMER_ONESHOT);
+    timer_start(TIMER_DELAY_ID, period, unit | TIMER_ONESHOT);
     while (timer_running(TIMER_DELAY_ID) && !timer_expired(TIMER_DELAY_ID)) {
     }
     timer_stop(TIMER_DELAY_ID);

@@ -3,7 +3,7 @@
  *
  *   uart0_init(115200);              // PB19 = TX, PB20 = RX (the USB-serial port)
  *   uart_puts(UART0, "hello\r\n");
- *   int c = uart_getc(UART0);        // blocks
+ *   int ch = uart_getc(UART0);       // blocks
  *
  * printf: link-time hooks in w80x_stdio.c send stdout/stderr to a UART and
  * read stdin from it. Pick the UART once:
@@ -25,10 +25,10 @@
  * or uart_set_baud(). Some CPU clocks lower APB (see w80x_clock.h), so call
  * uart_set_baud() again after clock_set_cpu_div(), and uart_flush() before it.
  *
- * Interrupts: uart_irq_enable(u, UART_INT_RX_LEVEL | UART_INT_RX_TIMEOUT) and
- * irq_enable(UART0_IRQn). In the handler, read the data, then clear the flags
- * with uart_irq_clear(u, uart_irq_status(u)). UART3, UART4 and UART5 share
- * UART3_5_IRQn.
+ * Interrupts: uart_irq_enable(uart, UART_INT_RX_LEVEL | UART_INT_RX_TIMEOUT)
+ * and irq_enable(UART0_IRQn). In the handler, read the data, then clear the
+ * flags with uart_irq_clear(uart, uart_irq_status(uart)). UART3, UART4 and
+ * UART5 share UART3_5_IRQn.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -55,9 +55,9 @@ extern "C" {
 #define UART_8N2  (UART_LC_DATA_8 | UART_LC_STOP_2)
 
 /* 0..5 from the register block address. */
-W80X_INLINE uint32_t uart_index(UART_TypeDef *u)
+W80X_INLINE uint32_t uart_index(UART_TypeDef *uart)
 {
-    return ((uint32_t)(uintptr_t)u - UART0_BASE) / (UART1_BASE - UART0_BASE);
+    return ((uint32_t)(uintptr_t)uart - UART0_BASE) / (UART1_BASE - UART0_BASE);
 }
 
 /* Route a TX/RX pin pair to the UART. RX gets the pull-up (as the vendor
@@ -77,7 +77,7 @@ W80X_INLINE void uart_pins(uint8_t tx, uint8_t rx, gpio_af_t af)
 
 /* divider = APB / (16 * baud) - 1, fraction = remainder in 1/16ths (the
  * vendor formula). Returns the baud rate actually produced. */
-W80X_INLINE uint32_t uart_set_baud(UART_TypeDef *u, uint32_t baud)
+W80X_INLINE uint32_t uart_set_baud(UART_TypeDef *uart, uint32_t baud)
 {
     uint32_t apb = clock_apb_hz();
     uint32_t b16 = baud * 16u;
@@ -88,34 +88,34 @@ W80X_INLINE uint32_t uart_set_baud(UART_TypeDef *u, uint32_t baud)
         div = 1;
         frac = 0;
     }
-    u->BAUDR = ((div - 1u) & UART_BAUDR_DIV_Msk) | (frac << UART_BAUDR_FRAC_Pos);
+    uart->BAUDR = ((div - 1u) & UART_BAUDR_DIV_Msk) | (frac << UART_BAUDR_FRAC_Pos);
     return apb / ((16u * div) + frac);    /* one bit = 16 * div + frac APB clocks */
 }
 
 /* Data bits / parity / stop bits; keeps TX and RX enabled. */
-W80X_INLINE void uart_set_format(UART_TypeDef *u, uint32_t fmt)
+W80X_INLINE void uart_set_format(UART_TypeDef *uart, uint32_t fmt)
 {
-    u->LC = (u->LC & (UART_LC_TX_EN | UART_LC_RX_EN)) | fmt;
+    uart->LC = (uart->LC & (UART_LC_TX_EN | UART_LC_RX_EN)) | fmt;
 }
 
 /* Clock on, out of reset, 8N1, TX + RX on, FIFOs empty, no interrupts.
  * Doesn't touch the pins: see uart_pins() or uart0_init(). */
-W80X_INLINE void uart_init(UART_TypeDef *u, uint32_t baud)
+W80X_INLINE void uart_init(UART_TypeDef *uart, uint32_t baud)
 {
-    uint32_t n = uart_index(u);
+    uint32_t index = uart_index(uart);
 
-    CLK->GATE_EN  |= CLK_GATE_UART0 << n;
-    CLK->RST_CTRL |= CLK_RST_UART0 << n;
+    CLK->GATE_EN  |= CLK_GATE_UART0 << index;
+    CLK->RST_CTRL |= CLK_RST_UART0 << index;
 
-    u->LC    = 0;
-    u->INTM  = UART_INT_ALL;
-    u->FC    = 0;
-    u->DMAC  = 0;
-    u->FIFOC = UART_FIFOC_TX_RST | UART_FIFOC_RX_RST;
-    u->FIFOC = 0;
-    uart_set_baud(u, baud);
-    u->INTS  = 0xFFFFFFFFu;
-    u->LC    = UART_8N1 | UART_LC_TX_EN | UART_LC_RX_EN;
+    uart->LC    = 0;
+    uart->INTM  = UART_INT_ALL;
+    uart->FC    = 0;
+    uart->DMAC  = 0;
+    uart->FIFOC = UART_FIFOC_TX_RST | UART_FIFOC_RX_RST;
+    uart->FIFOC = 0;
+    uart_set_baud(uart, baud);
+    uart->INTS  = 0xFFFFFFFFu;
+    uart->LC    = UART_8N1 | UART_LC_TX_EN | UART_LC_RX_EN;
 }
 
 /* UART0 on the default pins (PB19 TX, PB20 RX): the port the bootloader
@@ -128,46 +128,46 @@ W80X_INLINE void uart0_init(uint32_t baud)
 
 /* ---- status ---------------------------------------------------------- */
 
-W80X_INLINE uint32_t uart_tx_count(UART_TypeDef *u) { return u->FIFOS & UART_FIFOS_TX_Msk; }
-W80X_INLINE uint32_t uart_rx_count(UART_TypeDef *u) { return (u->FIFOS & UART_FIFOS_RX_Msk) >> UART_FIFOS_RX_Pos; }
-W80X_INLINE int      uart_rx_ready(UART_TypeDef *u) { return uart_rx_count(u) != 0; }
-W80X_INLINE int      uart_tx_ready(UART_TypeDef *u) { return uart_tx_count(u) < UART_TX_FIFO_SIZE; }
+W80X_INLINE uint32_t uart_tx_count(UART_TypeDef *uart) { return uart->FIFOS & UART_FIFOS_TX_Msk; }
+W80X_INLINE uint32_t uart_rx_count(UART_TypeDef *uart) { return (uart->FIFOS & UART_FIFOS_RX_Msk) >> UART_FIFOS_RX_Pos; }
+W80X_INLINE int      uart_rx_ready(UART_TypeDef *uart) { return uart_rx_count(uart) != 0; }
+W80X_INLINE int      uart_tx_ready(UART_TypeDef *uart) { return uart_tx_count(uart) < UART_TX_FIFO_SIZE; }
 
 /* ---- transmit ---------------------------------------------------------- */
 
-W80X_INLINE void uart_putc(UART_TypeDef *u, char c)
+W80X_INLINE void uart_putc(UART_TypeDef *uart, char ch)
 {
-    while (!uart_tx_ready(u)) {
+    while (!uart_tx_ready(uart)) {
     }
-    u->TDW = (uint8_t)c;
+    uart->TDW = (uint8_t)ch;
 }
 
-W80X_INLINE void uart_write(UART_TypeDef *u, const void *buf, uint32_t len)
+W80X_INLINE void uart_write(UART_TypeDef *uart, const void *buf, uint32_t len)
 {
-    const uint8_t *p = (const uint8_t *)buf;
+    const uint8_t *pos = (const uint8_t *)buf;
     while (len--) {
-        uart_putc(u, (char)*p++);
+        uart_putc(uart, (char)*pos++);
     }
 }
 
 /* No newline translation: write "\r\n" yourself (printf adds the \r). */
-W80X_INLINE void uart_puts(UART_TypeDef *u, const char *s)
+W80X_INLINE void uart_puts(UART_TypeDef *uart, const char *str)
 {
-    while (*s) {
-        uart_putc(u, *s++);
+    while (*str) {
+        uart_putc(uart, *str++);
     }
 }
 
 /* Wait until everything is on the wire: FIFO empty, then one more character
  * time for the byte in the shift register (there is no "TX idle" flag). Use
  * it before a reset, a clock change or sleeping. */
-W80X_INLINE void uart_flush(UART_TypeDef *u)
+W80X_INLINE void uart_flush(UART_TypeDef *uart)
 {
-    while (uart_tx_count(u)) {
+    while (uart_tx_count(uart)) {
     }
-    uint32_t b = u->BAUDR;
-    uint32_t bit_apb = (16u * ((b & UART_BAUDR_DIV_Msk) + 1u))
-                     + ((b & UART_BAUDR_FRAC_Msk) >> UART_BAUDR_FRAC_Pos);
+    uint32_t baudr = uart->BAUDR;
+    uint32_t bit_apb = (16u * ((baudr & UART_BAUDR_DIV_Msk) + 1u))
+                     + ((baudr & UART_BAUDR_FRAC_Msk) >> UART_BAUDR_FRAC_Pos);
     uint32_t ratio = clock_bus2_div();
     delay_ticks(12u * bit_apb * (ratio ? ratio : 1u));   /* 12 bits: up to 8E2 */
 }
@@ -175,26 +175,26 @@ W80X_INLINE void uart_flush(UART_TypeDef *u)
 /* ---- receive ----------------------------------------------------------- */
 
 /* Next byte, or -1 if none is waiting. */
-W80X_INLINE int uart_try_getc(UART_TypeDef *u)
+W80X_INLINE int uart_try_getc(UART_TypeDef *uart)
 {
-    return uart_rx_ready(u) ? (int)(u->RDW & 0xFFu) : -1;
+    return uart_rx_ready(uart) ? (int)(uart->RDW & 0xFFu) : -1;
 }
 
-W80X_INLINE int uart_getc(UART_TypeDef *u)
+W80X_INLINE int uart_getc(UART_TypeDef *uart)
 {
-    while (!uart_rx_ready(u)) {
+    while (!uart_rx_ready(uart)) {
     }
-    return (int)(u->RDW & 0xFFu);
+    return (int)(uart->RDW & 0xFFu);
 }
 
-W80X_INLINE void uart_rx_flush(UART_TypeDef *u)
+W80X_INLINE void uart_rx_flush(UART_TypeDef *uart)
 {
-    u->FIFOC |= UART_FIFOC_RX_RST;
+    uart->FIFOC |= UART_FIFOC_RX_RST;
 }
 
 /* Sticky receive errors (UART_INT_FRAME_ERR, _PARITY_ERR, _OVERRUN,
  * _BREAK). They are set even while masked; uart_irq_clear() clears them. */
-W80X_INLINE uint32_t uart_rx_errors(UART_TypeDef *u) { return u->INTS & UART_INT_RX_ERRORS; }
+W80X_INLINE uint32_t uart_rx_errors(UART_TypeDef *uart) { return uart->INTS & UART_INT_RX_ERRORS; }
 
 /* ---- interrupts ----------------------------------------------------------- */
 
@@ -209,28 +209,28 @@ W80X_INLINE uint32_t uart_rx_errors(UART_TypeDef *u) { return u->INTS & UART_INT
 
 /* UART_INT_RX_LEVEL fires once the RX FIFO holds at least this many bytes.
  * Add UART_INT_RX_TIMEOUT to also catch a shorter tail when the line goes idle. */
-W80X_INLINE void uart_set_rx_level(UART_TypeDef *u, uint32_t lvl)
+W80X_INLINE void uart_set_rx_level(UART_TypeDef *uart, uint32_t level)
 {
-    u->FIFOC = (u->FIFOC & ~(3u << UART_FIFOC_RXLVL_Pos)) | ((lvl & 3u) << UART_FIFOC_RXLVL_Pos);
+    uart->FIFOC = (uart->FIFOC & ~(3u << UART_FIFOC_RXLVL_Pos)) | ((level & 3u) << UART_FIFOC_RXLVL_Pos);
 }
 
 /* UART_INT_TX_LEVEL fires once the TX FIFO has drained down to this level,
  * i.e. there is room to refill it. */
-W80X_INLINE void uart_set_tx_level(UART_TypeDef *u, uint32_t lvl)
+W80X_INLINE void uart_set_tx_level(UART_TypeDef *uart, uint32_t level)
 {
-    u->FIFOC = (u->FIFOC & ~(3u << UART_FIFOC_TXLVL_Pos)) | ((lvl & 3u) << UART_FIFOC_TXLVL_Pos);
+    uart->FIFOC = (uart->FIFOC & ~(3u << UART_FIFOC_TXLVL_Pos)) | ((level & 3u) << UART_FIFOC_TXLVL_Pos);
 }
 
-W80X_INLINE void     uart_irq_enable(UART_TypeDef *u, uint32_t m)  { u->INTM &= ~m; }
-W80X_INLINE void     uart_irq_disable(UART_TypeDef *u, uint32_t m) { u->INTM |= m; }
-W80X_INLINE uint32_t uart_irq_status(UART_TypeDef *u)              { return u->INTS & ~u->INTM & UART_INT_ALL; }
-W80X_INLINE void     uart_irq_clear(UART_TypeDef *u, uint32_t m)   { u->INTS = m; }
+W80X_INLINE void     uart_irq_enable(UART_TypeDef *uart, uint32_t mask)  { uart->INTM &= ~mask; }
+W80X_INLINE void     uart_irq_disable(UART_TypeDef *uart, uint32_t mask) { uart->INTM |= mask; }
+W80X_INLINE uint32_t uart_irq_status(UART_TypeDef *uart)                 { return uart->INTS & ~uart->INTM & UART_INT_ALL; }
+W80X_INLINE void     uart_irq_clear(UART_TypeDef *uart, uint32_t mask)   { uart->INTS = mask; }
 
 /* ---- stdio (w80x_stdio.c) ------------------------------------------------- */
 
-/* Send printf/puts/stdout/stderr to u and read stdin from it. NULL (the
+/* Send printf/puts/stdout/stderr to uart and read stdin from it. NULL (the
  * default) discards output and makes reads return end-of-file. */
-void stdio_set_uart(UART_TypeDef *u);
+void stdio_set_uart(UART_TypeDef *uart);
 
 #ifdef __cplusplus
 }

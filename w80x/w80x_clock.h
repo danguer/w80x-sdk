@@ -60,8 +60,8 @@ W80X_INLINE uint32_t clock_bus2_div(void) { return (CLK->DIV & CLK_DIV_BUS2_Msk)
  * ratio stays correct if a bootloader set them differently. */
 W80X_INLINE uint32_t clock_apb_hz(void)
 {
-    uint32_t r = clock_bus2_div();
-    return clock_cpu_hz() / (r ? r : 1u);
+    uint32_t ratio = clock_bus2_div();
+    return clock_cpu_hz() / (ratio ? ratio : 1u);
 }
 W80X_INLINE uint32_t clock_peri_hz(void)
 {

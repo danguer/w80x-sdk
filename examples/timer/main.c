@@ -53,9 +53,9 @@ int main(void)
     /* short delay, measured in CPU cycles */
     uint32_t t0 = CPU_TICKS;
     timer_delay_us(100);
-    uint32_t c = cpu_cycles_since(t0);
+    uint32_t cycles = cpu_cycles_since(t0);
     printf("timer_delay_us(100): %lu cycles = %lu us\n",
-           (unsigned long)c, (unsigned long)cpu_cycles_to_us(c));
+           (unsigned long)cycles, (unsigned long)cpu_cycles_to_us(cycles));
 
     timer_start(TIMER0, 1,   TIMER_MS | TIMER_PERIODIC | TIMER_IRQ);
     timer_start(TIMER1, 250, TIMER_MS | TIMER_PERIODIC | TIMER_IRQ);

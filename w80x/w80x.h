@@ -759,33 +759,33 @@ W80X_INLINE void     __nop(void)          { __asm__ volatile("nop"); }
 W80X_INLINE void     __wait(void)         { __asm__ volatile("wait"); }
 W80X_INLINE void     __dsb(void)          { __asm__ volatile("sync" ::: "memory"); }
 
-W80X_INLINE uint32_t __get_PSR(void)      { uint32_t r; __asm__ volatile("mfcr %0, psr" : "=r"(r)); return r; }
-W80X_INLINE void     __set_PSR(uint32_t v){ __asm__ volatile("mtcr %0, psr" :: "r"(v) : "memory"); }
-W80X_INLINE void     __set_VBR(uint32_t v){ __asm__ volatile("mtcr %0, vbr" :: "r"(v) : "memory"); }
-W80X_INLINE uint32_t __get_VBR(void)      { uint32_t r; __asm__ volatile("mfcr %0, vbr" : "=r"(r)); return r; }
-W80X_INLINE uint32_t __get_CHR(void)      { uint32_t r; __asm__ volatile("mfcr %0, cr<31, 0>" : "=r"(r)); return r; }
-W80X_INLINE void     __set_CHR(uint32_t v){ __asm__ volatile("mtcr %0, cr<31, 0>" :: "r"(v) : "memory"); }
+W80X_INLINE uint32_t __get_PSR(void)           { uint32_t value; __asm__ volatile("mfcr %0, psr" : "=r"(value)); return value; }
+W80X_INLINE void     __set_PSR(uint32_t value) { __asm__ volatile("mtcr %0, psr" :: "r"(value) : "memory"); }
+W80X_INLINE void     __set_VBR(uint32_t value) { __asm__ volatile("mtcr %0, vbr" :: "r"(value) : "memory"); }
+W80X_INLINE uint32_t __get_VBR(void)           { uint32_t value; __asm__ volatile("mfcr %0, vbr" : "=r"(value)); return value; }
+W80X_INLINE uint32_t __get_CHR(void)           { uint32_t value; __asm__ volatile("mfcr %0, cr<31, 0>" : "=r"(value)); return value; }
+W80X_INLINE void     __set_CHR(uint32_t value) { __asm__ volatile("mtcr %0, cr<31, 0>" :: "r"(value) : "memory"); }
 
 #define PSR_IE   BIT(6)
 #define CHR_IAE  BIT(4)   /* interrupt stack alignment enable */
 
 /* Critical sections: save PSR, disable IRQs, restore later. */
-W80X_INLINE uint32_t irq_save(void)          { uint32_t p = __get_PSR(); __disable_irq(); return p; }
-W80X_INLINE void     irq_restore(uint32_t p) { if (p & PSR_IE) { __enable_irq(); } }
+W80X_INLINE uint32_t irq_save(void)            { uint32_t psr = __get_PSR(); __disable_irq(); return psr; }
+W80X_INLINE void     irq_restore(uint32_t psr) { if (psr & PSR_IE) { __enable_irq(); } }
 
 /* Per-IRQ control */
-W80X_INLINE void irq_enable(IRQn_Type n)        { VIC->ISER[0] = BIT(n); }
-W80X_INLINE void irq_disable(IRQn_Type n)       { VIC->ICER[0] = BIT(n); }
-W80X_INLINE void irq_set_pending(IRQn_Type n)   { VIC->ISPR[0] = BIT(n); }
-W80X_INLINE void irq_clear_pending(IRQn_Type n) { VIC->ICPR[0] = BIT(n); }
+W80X_INLINE void irq_enable(IRQn_Type irq)        { VIC->ISER[0] = BIT(irq); }
+W80X_INLINE void irq_disable(IRQn_Type irq)       { VIC->ICER[0] = BIT(irq); }
+W80X_INLINE void irq_set_pending(IRQn_Type irq)   { VIC->ISPR[0] = BIT(irq); }
+W80X_INLINE void irq_clear_pending(IRQn_Type irq) { VIC->ICPR[0] = BIT(irq); }
 /* Let this IRQ wake the core from __wait() (VIC IWER/IWDR). */
-W80X_INLINE void irq_wakeup_enable(IRQn_Type n)  { VIC->IWER[0] = BIT(n); }
-W80X_INLINE void irq_wakeup_disable(IRQn_Type n) { VIC->IWDR[0] = BIT(n); }
+W80X_INLINE void irq_wakeup_enable(IRQn_Type irq)  { VIC->IWER[0] = BIT(irq); }
+W80X_INLINE void irq_wakeup_disable(IRQn_Type irq) { VIC->IWDR[0] = BIT(irq); }
 /* prio 0 (highest) .. 3 (lowest); stored in the top 2 bits of each byte. */
-W80X_INLINE void irq_set_priority(IRQn_Type n, uint32_t prio)
+W80X_INLINE void irq_set_priority(IRQn_Type irq, uint32_t prio)
 {
-    uint32_t sh = (n & 3u) * 8u;
-    VIC->IPR[n >> 2] = (VIC->IPR[n >> 2] & ~(0xFFUL << sh)) | (((prio << 6) & 0xFFUL) << sh);
+    uint32_t shift = (irq & 3u) * 8u;
+    VIC->IPR[irq >> 2] = (VIC->IPR[irq >> 2] & ~(0xFFUL << shift)) | (((prio << 6) & 0xFFUL) << shift);
 }
 
 /* ------------------------------------------------------------------------ */

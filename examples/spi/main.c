@@ -51,8 +51,8 @@ static void check_ok(const char *name, int ok)
 
 static void fill(uint32_t len, uint32_t seed)
 {
-    for (uint32_t i = 0; i < len; i++) {
-        tx[i] = (uint8_t)((i * 7u) + seed);
+    for (uint32_t pos = 0; pos < len; pos++) {
+        tx[pos] = (uint8_t)((pos * 7u) + seed);
     }
 }
 
@@ -62,16 +62,16 @@ static int loop_at(uint32_t len, uint32_t seed, uint32_t off, int dma)
 {
     fill(off + len, seed);
     memset(rx, 0, off + len);
-    int r = dma ? spi_transfer_dma(DMA_TX_CH, DMA_RX_CH, tx + off, rx + off, len)
+    int err = dma ? spi_transfer_dma(DMA_TX_CH, DMA_RX_CH, tx + off, rx + off, len)
                 : spi_transfer(tx + off, rx + off, len);
-    if (r) {
+    if (err) {
         printf("    timeout\n");
         return 0;
     }
-    for (uint32_t i = off; i < (off + len); i++) {
-        if (rx[i] != tx[i]) {
+    for (uint32_t pos = off; pos < (off + len); pos++) {
+        if (rx[pos] != tx[pos]) {
             printf("    byte %lu: sent %02x, got %02x\n",
-                   (unsigned long)(i - off), tx[i], rx[i]);
+                   (unsigned long)(pos - off), tx[pos], rx[pos]);
             return 0;
         }
     }
@@ -100,18 +100,18 @@ int main(void)
     printf("SCK %lu Hz\n", (unsigned long)hz);
 
     /* is the wire there? */
-    uint8_t a = spi_xfer(0xA5), b = spi_xfer(0x5A);
-    if ((a != 0xA5) || (b != 0x5A)) {
-        printf("  sent a5 5a, got %02x %02x: is PA7 wired to PB3?\n", a, b);
+    uint8_t echo1 = spi_xfer(0xA5), echo2 = spi_xfer(0x5A);
+    if ((echo1 != 0xA5) || (echo2 != 0x5A)) {
+        printf("  sent a5 5a, got %02x %02x: is PA7 wired to PB3?\n", echo1, echo2);
     }
-    check_ok("loopback wire", (a == 0xA5) && (b == 0x5A));
+    check_ok("loopback wire", (echo1 == 0xA5) && (echo2 == 0x5A));
 
     /* lengths around word and FIFO boundaries */
     static const uint16_t lens[] = { 1, 2, 3, 4, 5, 7, 31, 32, 33, 63, 64, 65, 100, 1000 };
     int ok = 1;
-    for (uint32_t i = 0; i < (sizeof lens / sizeof lens[0]); i++) {
-        if (!loop(lens[i], i)) {
-            printf("    (length %u)\n", lens[i]);
+    for (uint32_t idx = 0; idx < (sizeof lens / sizeof lens[0]); idx++) {
+        if (!loop(lens[idx], idx)) {
+            printf("    (length %u)\n", lens[idx]);
             ok = 0;
         }
     }
@@ -123,18 +123,18 @@ int main(void)
 
     /* all clock modes */
     static const uint32_t modes[] = { SPI_MODE0, SPI_MODE1, SPI_MODE2, SPI_MODE3 };
-    for (uint32_t m = 0; m < 4; m++) {
-        spi_set_mode(modes[m]);
-        snprintf(name, sizeof name, "mode %lu", (unsigned long)m);
-        check_ok(name, loop(256, m));
+    for (uint32_t idx = 0; idx < 4; idx++) {
+        spi_set_mode(modes[idx]);
+        snprintf(name, sizeof name, "mode %lu", (unsigned long)idx);
+        check_ok(name, loop(256, idx));
     }
     spi_set_mode(SPI_MODE0);
 
     /* one side NULL */
     memset(rx, 0, 64);
     ok = (spi_read(rx, 64) == 0);
-    for (uint32_t i = 0; i < 64; i++) {
-        ok &= (rx[i] == 0xFF);
+    for (uint32_t pos = 0; pos < 64; pos++) {
+        ok &= (rx[pos] == 0xFF);
     }
     check_ok("spi_read sends 0xFF", ok);
     fill(64, 9);
@@ -142,24 +142,24 @@ int main(void)
 
     /* clock rates and throughput */
     static const uint32_t rates[] = { 100000, 1000000, 5000000, 10000000, 20000000 };
-    for (uint32_t i = 0; i < (sizeof rates / sizeof rates[0]); i++) {
-        uint32_t len = (rates[i] < 1000000) ? 256 : 2048;
-        hz = spi_set_clock(rates[i]);
+    for (uint32_t idx = 0; idx < (sizeof rates / sizeof rates[0]); idx++) {
+        uint32_t len = (rates[idx] < 1000000) ? 256 : 2048;
+        hz = spi_set_clock(rates[idx]);
         uint32_t t0 = CPU_TICKS;
-        int r = loop(len, i);
+        int passed = loop(len, idx);
         uint32_t cyc = cpu_cycles_since(t0);
         uint32_t us = cpu_cycles_to_us(cyc);
         snprintf(name, sizeof name, "SCK %lu kHz, %lu bytes", (unsigned long)(hz / 1000),
                  (unsigned long)len);
-        check_ok(name, r);
+        check_ok(name, passed);
         if (us) {
             printf("    %lu us, %lu KB/s (wire limit %lu KB/s)\n", (unsigned long)us,
                    (unsigned long)(len * 1000u / us), (unsigned long)(hz / 8000u));
         }
         /* fixed cost of one chunk: 100 single-byte transfers */
         t0 = CPU_TICKS;
-        for (uint32_t k = 0; k < 100; k++) {
-            spi_xfer((uint8_t)k);
+        for (uint32_t byte = 0; byte < 100; byte++) {
+            spi_xfer((uint8_t)byte);
         }
         printf("    1-byte transfer: %lu cycles\n", (unsigned long)(cpu_cycles_since(t0) / 100u));
     }
@@ -169,9 +169,9 @@ int main(void)
     dma_init();
     static const uint16_t dlens[] = { 4, 8, 32, 36, 64, 512, 2048, 1, 3, 5, 513, 2047 };
     ok = 1;
-    for (uint32_t i = 0; i < (sizeof dlens / sizeof dlens[0]); i++) {
-        if (!loop_at(dlens[i], i, 0, 1)) {
-            printf("    (length %u)\n", dlens[i]);
+    for (uint32_t idx = 0; idx < (sizeof dlens / sizeof dlens[0]); idx++) {
+        if (!loop_at(dlens[idx], idx, 0, 1)) {
+            printf("    (length %u)\n", dlens[idx]);
             ok = 0;
         }
     }
@@ -182,8 +182,8 @@ int main(void)
 
     memset(rx, 0, 512);
     ok = (spi_transfer_dma(DMA_TX_CH, DMA_RX_CH, NULL, rx, 512) == 0);
-    for (uint32_t i = 0; i < 512; i++) {
-        ok &= (rx[i] == 0xFF);
+    for (uint32_t pos = 0; pos < 512; pos++) {
+        ok &= (rx[pos] == 0xFF);
     }
     check_ok("DMA read sends 0xFF", ok);
     fill(512, 11);
@@ -193,20 +193,20 @@ int main(void)
     hz = spi_set_clock(20000000);
     printf("SCK %lu kHz, FIFO copy vs DMA:\n", (unsigned long)(hz / 1000u));
     static const uint32_t slens[] = { 512, 8188 };
-    for (uint32_t i = 0; i < 2; i++) {
+    for (uint32_t idx = 0; idx < 2; idx++) {
         uint32_t t0 = CPU_TICKS;
-        int r1 = spi_transfer(tx, rx, slens[i]);
+        int err_fifo = spi_transfer(tx, rx, slens[idx]);
         uint32_t us_fifo = cpu_cycles_to_us(cpu_cycles_since(t0));
         t0 = CPU_TICKS;
-        int r2 = spi_transfer_dma(DMA_TX_CH, DMA_RX_CH, tx, rx, slens[i]);
+        int err_dma = spi_transfer_dma(DMA_TX_CH, DMA_RX_CH, tx, rx, slens[idx]);
         uint32_t us_dma = cpu_cycles_to_us(cpu_cycles_since(t0));
         printf("    %4lu bytes: FIFO %lu us (%lu KB/s), DMA %lu us (%lu KB/s), wire limit %lu KB/s\n",
-               (unsigned long)slens[i], (unsigned long)us_fifo,
-               (unsigned long)(us_fifo ? (slens[i] * 1000u / us_fifo) : 0u),
-               (unsigned long)us_dma, (unsigned long)(us_dma ? (slens[i] * 1000u / us_dma) : 0u),
+               (unsigned long)slens[idx], (unsigned long)us_fifo,
+               (unsigned long)(us_fifo ? (slens[idx] * 1000u / us_fifo) : 0u),
+               (unsigned long)us_dma, (unsigned long)(us_dma ? (slens[idx] * 1000u / us_dma) : 0u),
                (unsigned long)(hz / 8000u));
-        snprintf(name, sizeof name, "DMA faster, %lu bytes", (unsigned long)slens[i]);
-        check_ok(name, (r1 == 0) && (r2 == 0) && (us_dma < us_fifo));
+        snprintf(name, sizeof name, "DMA faster, %lu bytes", (unsigned long)slens[idx]);
+        check_ok(name, (err_fifo == 0) && (err_dma == 0) && (us_dma < us_fifo));
     }
     spi_set_clock(1000000);
 

@@ -4,7 +4,7 @@
  *
  *   crypto_init();
  *
- *   uint32_t c = crc32(buf, len);             // same result as zlib crc32()
+ *   uint32_t crc = crc32(buf, len);           // same result as zlib crc32()
  *
  *   uint8_t digest[SHA1_SIZE];
  *   sha1(data, len, digest);                  // or sha1_init/update/final
@@ -14,7 +14,7 @@
  *   cipher_encrypt(&aes, plain, out, 64);     // multiple of the block size
  *
  *   rng_init();                               // or rng_init_analog(): raw bits
- *   uint32_t r = rng_read();                  // hardware TRNG
+ *   uint32_t random = rng_read();             // hardware TRNG
  *
  * The engine copies data itself: it reads `in` and writes `out` in memory,
  * like a DMA channel. It can only read SRAM (from flash it reads zeros), so
@@ -85,9 +85,9 @@ static inline int gpsec__run(const void *src, void *dst, uint32_t cfg, uint32_t 
     GPSEC->CFG = cfg | GPSEC_CFG_INT_MASK | (len & GPSEC_CFG_TOTAL_Msk);
     GPSEC->CTRL = GPSEC_CTRL_START;
 
-    for (uint32_t t = CRYPTO_TIMEOUT;
+    for (uint32_t tries = CRYPTO_TIMEOUT;
          (GPSEC->CTRL & GPSEC_CTRL_START) || !(GPSEC->STS & GPSEC_STS_DONE); ) {
-        if (--t == 0) {
+        if (--tries == 0) {
             GPSEC->CTRL = GPSEC_CTRL_STOP;
             return -1;
         }
@@ -98,19 +98,19 @@ static inline int gpsec__run(const void *src, void *dst, uint32_t cfg, uint32_t 
 
 /* The engine only reads SRAM: from flash (const data) it reads zeros, as
  * seen on hardware. Sources outside SRAM are copied through RAM here. */
-W80X_INLINE int gpsec__in_sram(const void *p, size_t len)
+W80X_INLINE int gpsec__in_sram(const void *buf, size_t len)
 {
-    uint32_t a = (uint32_t)p;
-    return (a >= SRAM_BASE) && ((a + len) <= (SRAM_BASE + SRAM_SIZE));
+    uint32_t addr = (uint32_t)buf;
+    return (addr >= SRAM_BASE) && ((addr + len) <= (SRAM_BASE + SRAM_SIZE));
 }
 
 /* Copy bytes into 32-bit registers / out of them, little-endian, any alignment. */
 static inline void gpsec__put(__IO uint32_t *reg, const uint8_t *src, uint32_t words)
 {
     for (uint32_t i = 0; i < words; i++) {
-        uint32_t w;
-        memcpy(&w, src + (4u * i), 4);
-        reg[i] = w;
+        uint32_t word;
+        memcpy(&word, src + (4u * i), 4);
+        reg[i] = word;
     }
 }
 
@@ -135,13 +135,13 @@ static inline uint32_t crc__width(uint32_t mode)
     }
 }
 
-static inline uint32_t crc__reflect(uint32_t v, uint32_t bits)
+static inline uint32_t crc__reflect(uint32_t value, uint32_t bits)
 {
-    uint32_t r = 0;
-    for (uint32_t i = 0; i < bits; i++, v >>= 1) {
-        r = (r << 1) | (v & 1u);
+    uint32_t reflected = 0;
+    for (uint32_t bit = 0; bit < bits; bit++, value >>= 1) {
+        reflected = (reflected << 1) | (value & 1u);
     }
-    return r;
+    return reflected;
 }
 
 /* Raw hardware CRC: starts from `crc` (an initial value, or the result of a
@@ -150,7 +150,7 @@ static inline uint32_t crc__reflect(uint32_t v, uint32_t bits)
  * give the same result as one call over all the data. */
 static inline uint32_t crc_calc(uint32_t mode, uint32_t crc, const void *data, size_t len)
 {
-    const uint8_t *p = (const uint8_t *)data;
+    const uint8_t *pos = (const uint8_t *)data;
     uint32_t bits = crc__width(mode);
     uint32_t cfg = GPSEC_CFG_ALG(GPSEC_ALG_CRC) |
                    (mode & (GPSEC_CFG_SUB_Msk | CRC_REFLECT_IN | CRC_REFLECT_OUT));
@@ -159,17 +159,17 @@ static inline uint32_t crc_calc(uint32_t mode, uint32_t crc, const void *data, s
 
     while (len) {
         uint32_t max = direct ? 0xFFFCu : sizeof bounce;
-        uint32_t n = (len > max) ? max : (uint32_t)len;
-        const void *src = p;
+        uint32_t chunk_len = (len > max) ? max : (uint32_t)len;
+        const void *src = pos;
         if (!direct) {
-            src = memcpy(bounce, p, n);
+            src = memcpy(bounce, pos, chunk_len);
         }
         GPSEC->DIGEST[4] = (mode & CRC_REFLECT_OUT) ? crc__reflect(crc, bits) : crc;
-        gpsec__run(src, 0, cfg, n);
+        gpsec__run(src, 0, cfg, chunk_len);
         crc = GPSEC->DIGEST[4];
         GPSEC->CTRL = GPSEC_CTRL_CRC_CLR;
-        p += n;
-        len -= n;
+        pos += chunk_len;
+        len -= chunk_len;
     }
     return (bits == 32) ? crc : crc & ((1u << bits) - 1u);
 }
@@ -177,7 +177,7 @@ static inline uint32_t crc_calc(uint32_t mode, uint32_t crc, const void *data, s
 /* Standard CRCs ("123456789" check value in brackets). */
 
 /* CRC-32 as in zlib/Ethernet/PNG [0xCBF43926]. Continue with
- * crc = crc32_update(crc, more, n), starting from 0. */
+ * crc = crc32_update(crc, more, len), starting from 0. */
 static inline uint32_t crc32_update(uint32_t crc, const void *data, size_t len)
 {
     return ~crc_calc(CRC_32 | CRC_REFLECT_IN | CRC_REFLECT_OUT, ~crc, data, len);
@@ -217,84 +217,85 @@ typedef struct {
 } hash_ctx_t;
 
 /* Run the engine over the 64-byte block in ctx->buf. */
-static inline int hash__block(hash_ctx_t *c)
+static inline int hash__block(hash_ctx_t *ctx)
 {
-    uint32_t words = (c->alg == GPSEC_ALG_SHA1) ? 5u : 4u;
+    uint32_t words = (ctx->alg == GPSEC_ALG_SHA1) ? 5u : 4u;
     for (uint32_t i = 0; i < words; i++) {
-        GPSEC->DIGEST[i] = c->state[i];
+        GPSEC->DIGEST[i] = ctx->state[i];
     }
-    int r = gpsec__run(c->buf, 0, GPSEC_CFG_ALG(c->alg), 64);
+    int err = gpsec__run(ctx->buf, 0, GPSEC_CFG_ALG(ctx->alg), 64);
     for (uint32_t i = 0; i < words; i++) {
-        c->state[i] = GPSEC->DIGEST[i];
+        ctx->state[i] = GPSEC->DIGEST[i];
     }
-    return r;
+    return err;
 }
 
-static inline void hash__init(hash_ctx_t *c, uint32_t alg)
+static inline void hash__init(hash_ctx_t *ctx, uint32_t alg)
 {
-    c->state[0] = 0x67452301u;    /* same start values for SHA1 and MD5 */
-    c->state[1] = 0xEFCDAB89u;
-    c->state[2] = 0x98BADCFEu;
-    c->state[3] = 0x10325476u;
-    c->state[4] = 0xC3D2E1F0u;    /* SHA1 only */
-    c->bytes = 0;
-    c->alg = alg;
+    ctx->state[0] = 0x67452301u;    /* same start values for SHA1 and MD5 */
+    ctx->state[1] = 0xEFCDAB89u;
+    ctx->state[2] = 0x98BADCFEu;
+    ctx->state[3] = 0x10325476u;
+    ctx->state[4] = 0xC3D2E1F0u;    /* SHA1 only */
+    ctx->bytes = 0;
+    ctx->alg = alg;
 }
 
-static inline int hash_update(hash_ctx_t *c, const void *data, size_t len)
+static inline int hash_update(hash_ctx_t *ctx, const void *data, size_t len)
 {
-    const uint8_t *p = (const uint8_t *)data;
-    uint8_t *buf = (uint8_t *)c->buf;
-    int r = 0;
+    const uint8_t *pos = (const uint8_t *)data;
+    uint8_t *buf = (uint8_t *)ctx->buf;
+    int err = 0;
 
     while (len) {
-        uint32_t used = (uint32_t)(c->bytes & 63u);
-        uint32_t n = 64u - used;
-        if (n > len) {
-            n = (uint32_t)len;
+        uint32_t used = (uint32_t)(ctx->bytes & 63u);
+        uint32_t take = 64u - used;
+        if (take > len) {
+            take = (uint32_t)len;
         }
-        memcpy(buf + used, p, n);
-        c->bytes += n;
-        p += n;
-        len -= n;
-        if ((c->bytes & 63u) == 0) {
-            r |= hash__block(c);
+        memcpy(buf + used, pos, take);
+        ctx->bytes += take;
+        pos += take;
+        len -= take;
+        if ((ctx->bytes & 63u) == 0) {
+            err |= hash__block(ctx);
         }
     }
-    return r;
+    return err;
 }
 
 /* Pad, write the digest (SHA1_SIZE or MD5_SIZE bytes) to out. */
-static inline int hash_final(hash_ctx_t *c, uint8_t *out)
+static inline int hash_final(hash_ctx_t *ctx, uint8_t *out)
 {
-    uint8_t *buf = (uint8_t *)c->buf;
-    uint64_t bits = c->bytes * 8u;
-    uint32_t used = (uint32_t)(c->bytes & 63u);
-    int sha = c->alg == GPSEC_ALG_SHA1;
-    int r = 0;
+    uint8_t *buf = (uint8_t *)ctx->buf;
+    uint64_t bits = ctx->bytes * 8u;
+    uint32_t used = (uint32_t)(ctx->bytes & 63u);
+    int sha = ctx->alg == GPSEC_ALG_SHA1;
+    int err = 0;
 
     buf[used++] = 0x80;
     if (used > 56) {
         memset(buf + used, 0, 64u - used);
-        r |= hash__block(c);
+        err |= hash__block(ctx);
         used = 0;
     }
     memset(buf + used, 0, 56u - used);
     for (uint32_t i = 0; i < 8; i++) {      /* SHA1: big-endian length, MD5: little */
         buf[56 + i] = (uint8_t)(bits >> (sha ? 56u - (8u * i) : 8u * i));
     }
-    r |= hash__block(c);
+    err |= hash__block(ctx);
 
     for (uint32_t i = 0; i < (sha ? 5u : 4u); i++) {
-        for (uint32_t b = 0; b < 4; b++) {
-            out[(4 * i) + b] = (uint8_t)(c->state[i] >> (sha ? 24u - (8u * b) : 8u * b));
+        for (uint32_t byte = 0; byte < 4; byte++) {
+            uint32_t shift = sha ? (24u - (8u * byte)) : (8u * byte);
+            out[(4 * i) + byte] = (uint8_t)(ctx->state[i] >> shift);
         }
     }
-    return r;
+    return err;
 }
 
-static inline void sha1_init(hash_ctx_t *c) { hash__init(c, GPSEC_ALG_SHA1); }
-static inline void md5_init(hash_ctx_t *c)  { hash__init(c, GPSEC_ALG_MD5); }
+static inline void sha1_init(hash_ctx_t *ctx) { hash__init(ctx, GPSEC_ALG_SHA1); }
+static inline void md5_init(hash_ctx_t *ctx)  { hash__init(ctx, GPSEC_ALG_MD5); }
 #define sha1_update hash_update
 #define md5_update  hash_update
 #define sha1_final  hash_final
@@ -303,15 +304,15 @@ static inline void md5_init(hash_ctx_t *c)  { hash__init(c, GPSEC_ALG_MD5); }
 /* One-shot digests. */
 static inline int sha1(const void *data, size_t len, uint8_t out[SHA1_SIZE])
 {
-    hash_ctx_t c;
-    sha1_init(&c);
-    return hash_update(&c, data, len) | hash_final(&c, out);
+    hash_ctx_t ctx;
+    sha1_init(&ctx);
+    return hash_update(&ctx, data, len) | hash_final(&ctx, out);
 }
 static inline int md5(const void *data, size_t len, uint8_t out[MD5_SIZE])
 {
-    hash_ctx_t c;
-    md5_init(&c);
-    return hash_update(&c, data, len) | hash_final(&c, out);
+    hash_ctx_t ctx;
+    md5_init(&ctx);
+    return hash_update(&ctx, data, len) | hash_final(&ctx, out);
 }
 
 /* ======================================================================== */
@@ -333,150 +334,156 @@ typedef struct {
     uint8_t block;           /* 16 or 8 */
 } cipher_ctx_t;
 
-static inline int cipher__setup(cipher_ctx_t *c, uint32_t alg, const uint8_t *key, uint32_t keylen,
-                                uint32_t mode, const uint8_t *iv, uint32_t block)
+static inline int cipher__setup(cipher_ctx_t *ctx, uint32_t alg, const uint8_t *key,
+                                uint32_t keylen, uint32_t mode, const uint8_t *iv, uint32_t block)
 {
     if ((mode > ((alg == GPSEC_ALG_AES) ? CIPHER_CTR : CIPHER_CBC)) || ((mode != CIPHER_ECB) && !iv)) {
         return -1;
     }
-    memset(c, 0, sizeof(*c));
-    memcpy(c->key, key, keylen);
+    memset(ctx, 0, sizeof(*ctx));
+    memcpy(ctx->key, key, keylen);
     if (iv) {
-        memcpy(c->iv, iv, block);
+        memcpy(ctx->iv, iv, block);
     }
-    c->alg = (uint8_t)alg;
-    c->mode = (uint8_t)mode;
-    c->block = (uint8_t)block;
+    ctx->alg = (uint8_t)alg;
+    ctx->mode = (uint8_t)mode;
+    ctx->block = (uint8_t)block;
     return 0;
 }
 
 /* iv: 16 bytes (CBC IV or CTR initial counter block), NULL for ECB.
  * CTR counts the whole block as a 128-bit big-endian number (NIST SP 800-38A). */
-static inline int aes_setup(cipher_ctx_t *c, const uint8_t key[16], uint32_t mode, const uint8_t *iv)
+static inline int aes_setup(cipher_ctx_t *ctx, const uint8_t key[16], uint32_t mode,
+                            const uint8_t *iv)
 {
-    return cipher__setup(c, GPSEC_ALG_AES, key, 16, mode, iv, AES_BLOCK);
+    return cipher__setup(ctx, GPSEC_ALG_AES, key, 16, mode, iv, AES_BLOCK);
 }
 /* iv: 8 bytes, NULL for ECB. Mode ECB or CBC. */
-static inline int des_setup(cipher_ctx_t *c, const uint8_t key[8], uint32_t mode, const uint8_t *iv)
+static inline int des_setup(cipher_ctx_t *ctx, const uint8_t key[8], uint32_t mode,
+                            const uint8_t *iv)
 {
-    return cipher__setup(c, GPSEC_ALG_DES, key, 8, mode, iv, DES_BLOCK);
+    return cipher__setup(ctx, GPSEC_ALG_DES, key, 8, mode, iv, DES_BLOCK);
 }
 /* key = K1 K2 K3 (24 bytes, EDE). For 2-key 3DES pass K1 K2 K1. */
-static inline int des3_setup(cipher_ctx_t *c, const uint8_t key[24], uint32_t mode, const uint8_t *iv)
+static inline int des3_setup(cipher_ctx_t *ctx, const uint8_t key[24], uint32_t mode,
+                             const uint8_t *iv)
 {
-    return cipher__setup(c, GPSEC_ALG_3DES, key, 24, mode, iv, DES_BLOCK);
+    return cipher__setup(ctx, GPSEC_ALG_3DES, key, 24, mode, iv, DES_BLOCK);
 }
 
 /* Add n to a 128-bit big-endian counter block. */
-static inline void cipher__ctr_add(uint8_t ctr[16], uint32_t n)
+static inline void cipher__ctr_add(uint8_t ctr[16], uint32_t add)
 {
-    for (int i = 15; (i >= 0) && n; i--) {
-        uint32_t s = ctr[i] + (n & 0xFFu);
-        ctr[i] = (uint8_t)s;
-        n = (n >> 8) + (s >> 8);
+    for (int pos = 15; (pos >= 0) && add; pos--) {
+        uint32_t sum = ctr[pos] + (add & 0xFFu);
+        ctr[pos] = (uint8_t)sum;
+        add = (add >> 8) + (sum >> 8);
     }
 }
 
 /* Load key and IV registers (wm_iot_sdk layout) and soft-reset the
  * algorithm so it starts from the loaded IV. */
-static inline void cipher__load(const cipher_ctx_t *c, uint32_t cfg)
+static inline void cipher__load(const cipher_ctx_t *ctx, uint32_t cfg)
 {
-    if (c->alg == GPSEC_ALG_AES) {
-        gpsec__put(GPSEC->KEY0, c->key, 4);              /* KEY0, KEY1 */
-        gpsec__put(GPSEC->IV0, c->iv, 2);
-        gpsec__put(GPSEC->KEY2, c->iv + 8, 2);
+    if (ctx->alg == GPSEC_ALG_AES) {
+        gpsec__put(GPSEC->KEY0, ctx->key, 4);            /* KEY0, KEY1 */
+        gpsec__put(GPSEC->IV0, ctx->iv, 2);
+        gpsec__put(GPSEC->KEY2, ctx->iv + 8, 2);
     } else {
-        gpsec__put(GPSEC->KEY0, c->key, (c->alg == GPSEC_ALG_3DES) ? 6u : 2u);
-        gpsec__put(GPSEC->IV0, c->iv, 2);
+        gpsec__put(GPSEC->KEY0, ctx->key, (ctx->alg == GPSEC_ALG_3DES) ? 6u : 2u);
+        gpsec__put(GPSEC->IV0, ctx->iv, 2);
     }
     GPSEC->CFG = cfg | GPSEC_CFG_INT_MASK |
-                 ((c->alg == GPSEC_ALG_AES) ? GPSEC_CFG_AES_RESET : GPSEC_CFG_DES_RESET);
+                 ((ctx->alg == GPSEC_ALG_AES) ? GPSEC_CFG_AES_RESET : GPSEC_CFG_DES_RESET);
 }
 
 /* CTR in software over hardware ECB. The hardware CTR mode builds its first
  * counter block from the IV registers in a scrambled order (seen on
  * hardware with the SP 800-38A vector), so it is not used. */
-static inline int cipher__ctr(cipher_ctx_t *c, const uint8_t *src, uint8_t *dst, size_t len)
+static inline int cipher__ctr(cipher_ctx_t *ctx, const uint8_t *src, uint8_t *dst, size_t len)
 {
     uint32_t ks[64];                                     /* 256 bytes of key stream */
-    uint8_t *k = (uint8_t *)ks;
+    uint8_t *keystream = (uint8_t *)ks;
     uint32_t cfg = GPSEC_CFG_ALG(GPSEC_ALG_AES) | GPSEC_CFG_SUB(GPSEC_SUB_ECB);
 
     while (len) {
-        uint32_t n = (len > sizeof ks) ? sizeof ks : (uint32_t)len;
-        for (uint32_t i = 0; i < n; i += AES_BLOCK) {
-            memcpy(k + i, c->iv, AES_BLOCK);
-            cipher__ctr_add(c->iv, 1);
+        uint32_t chunk_len = (len > sizeof ks) ? sizeof ks : (uint32_t)len;
+        for (uint32_t pos = 0; pos < chunk_len; pos += AES_BLOCK) {
+            memcpy(keystream + pos, ctx->iv, AES_BLOCK);
+            cipher__ctr_add(ctx->iv, 1);
         }
-        cipher__load(c, cfg);
-        if (gpsec__run(k, k, cfg, n)) {
+        cipher__load(ctx, cfg);
+        if (gpsec__run(keystream, keystream, cfg, chunk_len)) {
             return -1;
         }
-        for (uint32_t i = 0; i < n; i++) {
-            dst[i] = src[i] ^ k[i];
+        for (uint32_t pos = 0; pos < chunk_len; pos++) {
+            dst[pos] = src[pos] ^ keystream[pos];
         }
-        src += n;
-        dst += n;
-        len -= n;
+        src += chunk_len;
+        dst += chunk_len;
+        len -= chunk_len;
     }
     return 0;
 }
 
-static inline int cipher__run(cipher_ctx_t *c, const void *in, void *out, size_t len, uint32_t decrypt)
+static inline int cipher__run(cipher_ctx_t *ctx, const void *in, void *out, size_t len,
+                              uint32_t decrypt)
 {
     const uint8_t *src = (const uint8_t *)in;
     uint8_t *dst = (uint8_t *)out;
-    uint32_t bs = c->block;
-    uint32_t cfg = GPSEC_CFG_ALG(c->alg) | GPSEC_CFG_SUB(c->mode) | (decrypt ? GPSEC_CFG_DECRYPT : 0);
+    uint32_t block = ctx->block;
+    uint32_t cfg = GPSEC_CFG_ALG(ctx->alg) | GPSEC_CFG_SUB(ctx->mode) |
+                   (decrypt ? GPSEC_CFG_DECRYPT : 0);
 
-    if (len % bs) {
+    if (len % block) {
         return -1;
     }
-    if (c->mode == CIPHER_CTR) {
-        return cipher__ctr(c, src, dst, len);
+    if (ctx->mode == CIPHER_CTR) {
+        return cipher__ctr(ctx, src, dst, len);
     }
     if (!gpsec__in_sram(out, len)) {
         return -1;
     }
     int direct = gpsec__in_sram(in, len);
+    const uint32_t max_run = GPSEC_MAX_RUN & ~15u;      /* whole AES/DES blocks */
 
     while (len) {
-        uint32_t n = (len > (GPSEC_MAX_RUN & ~15u)) ? (GPSEC_MAX_RUN & ~15u) : (uint32_t)len;
+        uint32_t chunk_len = (len > max_run) ? max_run : (uint32_t)len;
         uint8_t next_iv[16];
 
-        if ((c->mode == CIPHER_CBC) && decrypt) {        /* save before in-place overwrite */
-            memcpy(next_iv, src + n - bs, bs);
+        if ((ctx->mode == CIPHER_CBC) && decrypt) {      /* save before in-place overwrite */
+            memcpy(next_iv, src + chunk_len - block, block);
         }
         if (!direct) {                                   /* flash source: work in place in out */
-            memcpy(dst, src, n);
+            memcpy(dst, src, chunk_len);
         }
 
-        cipher__load(c, cfg);
-        if (gpsec__run(direct ? src : dst, dst, cfg, n)) {
+        cipher__load(ctx, cfg);
+        if (gpsec__run(direct ? src : dst, dst, cfg, chunk_len)) {
             return -1;
         }
 
-        if (c->mode == CIPHER_CBC) {
-            memcpy(c->iv, decrypt ? next_iv : dst + n - bs, bs);
+        if (ctx->mode == CIPHER_CBC) {
+            memcpy(ctx->iv, decrypt ? next_iv : dst + chunk_len - block, block);
         }
 
-        src += n;
-        dst += n;
-        len -= n;
+        src += chunk_len;
+        dst += chunk_len;
+        len -= chunk_len;
     }
     return 0;
 }
 
 /* len must be a multiple of the block size (16 AES, 8 DES/3DES). CBC and CTR
  * continue where the previous call on this context stopped. */
-static inline int cipher_encrypt(cipher_ctx_t *c, const void *in, void *out, size_t len)
+static inline int cipher_encrypt(cipher_ctx_t *ctx, const void *in, void *out, size_t len)
 {
-    return cipher__run(c, in, out, len, 0);
+    return cipher__run(ctx, in, out, len, 0);
 }
-static inline int cipher_decrypt(cipher_ctx_t *c, const void *in, void *out, size_t len)
+static inline int cipher_decrypt(cipher_ctx_t *ctx, const void *in, void *out, size_t len)
 {
     /* CTR decrypts by encrypting */
-    return cipher__run(c, in, out, len, c->mode != CIPHER_CTR);
+    return cipher__run(ctx, in, out, len, ctx->mode != CIPHER_CTR);
 }
 
 /* ======================================================================== */
@@ -549,11 +556,12 @@ static inline void rng_init_analog(void) { rng__init(0); }
 static inline uint32_t rng_read(void)
 {
     uint32_t last = GPSEC->RNG;
-    for (uint32_t n = 0, t = CRYPTO_TIMEOUT; (n < RNG_CHANGES_PER_WORD) && --t; ) {
-        uint32_t v = GPSEC->RNG;
-        if (v != last) {
-            last = v;
-            n++;
+    uint32_t changes = 0;
+    for (uint32_t tries = CRYPTO_TIMEOUT; (changes < RNG_CHANGES_PER_WORD) && --tries; ) {
+        uint32_t value = GPSEC->RNG;
+        if (value != last) {
+            last = value;
+            changes++;
         }
     }
     return last;
@@ -561,13 +569,13 @@ static inline uint32_t rng_read(void)
 
 static inline void rng_fill(void *buf, size_t len)
 {
-    uint8_t *p = (uint8_t *)buf;
+    uint8_t *pos = (uint8_t *)buf;
     while (len) {
-        uint32_t w = rng_read();
-        uint32_t n = (len < 4) ? (uint32_t)len : 4u;
-        memcpy(p, &w, n);
-        p += n;
-        len -= n;
+        uint32_t word = rng_read();
+        uint32_t chunk_len = (len < 4) ? (uint32_t)len : 4u;
+        memcpy(pos, &word, chunk_len);
+        pos += chunk_len;
+        len -= chunk_len;
     }
 }
 

@@ -84,37 +84,37 @@ static uint32_t probe_first(void)
 static uint32_t probe_num(void)
 {
     uint32_t first = probe_first(), end = (uint32_t)__heap_end - 0x100u;
-    uint32_t n = (end > first) ? (((end - first) / PROBE_STEP) + 1u) : 0u;
-    return (n > PROBE_MAX) ? PROBE_MAX : n;
+    uint32_t count = (end > first) ? (((end - first) / PROBE_STEP) + 1u) : 0u;
+    return (count > PROBE_MAX) ? PROBE_MAX : count;
 }
 
-static volatile uint32_t *probe_ptr(uint32_t i)
+static volatile uint32_t *probe_ptr(uint32_t probe)
 {
-    return (volatile uint32_t *)(probe_first() + (i * PROBE_STEP));
+    return (volatile uint32_t *)(probe_first() + (probe * PROBE_STEP));
 }
 
 static void probe_write(void)
 {
-    for (uint32_t i = 0; i < probe_num(); i++) {
-        *probe_ptr(i) = PROBE_MAGIC ^ (uint32_t)probe_ptr(i);
+    for (uint32_t probe = 0; probe < probe_num(); probe++) {
+        *probe_ptr(probe) = PROBE_MAGIC ^ (uint32_t)probe_ptr(probe);
     }
 }
 
 /* Runs before .data/.bss: only NOINIT variables and const data here. */
 void w80x_early_init(void)
 {
-    for (uint32_t i = 0; i < NREGS; i++) {
-        early[i] = *(volatile const uint32_t *)regs[i].addr;
+    for (uint32_t reg = 0; reg < NREGS; reg++) {
+        early[reg] = *(volatile const uint32_t *)regs[reg].addr;
     }
     early_magic = EARLY_MAGIC;
 
     probe_count = probe_num();
-    for (uint32_t i = 0; i < ((PROBE_MAX + 31u) / 32u); i++) {
-        probe_ok[i] = 0;
+    for (uint32_t word = 0; word < ((PROBE_MAX + 31u) / 32u); word++) {
+        probe_ok[word] = 0;
     }
-    for (uint32_t i = 0; i < probe_count; i++) {
-        if (*probe_ptr(i) == (PROBE_MAGIC ^ (uint32_t)probe_ptr(i))) {
-            probe_ok[i / 32u] |= 1u << (i % 32u);
+    for (uint32_t probe = 0; probe < probe_count; probe++) {
+        if (*probe_ptr(probe) == (PROBE_MAGIC ^ (uint32_t)probe_ptr(probe))) {
+            probe_ok[probe / 32u] |= 1u << (probe % 32u);
         }
     }
 
@@ -126,46 +126,47 @@ void w80x_early_init(void)
     boots_check = ~boots;
 }
 
-static uint32_t reg_now(uint32_t i)
+static uint32_t reg_now(uint32_t reg)
 {
-    return *(volatile const uint32_t *)regs[i].addr;
+    return *(volatile const uint32_t *)regs[reg].addr;
 }
 
 /* How a value compares with the manual. */
-static const char *verdict(uint32_t i, uint32_t v)
+static const char *verdict(uint32_t reg, uint32_t value)
 {
-    if ((v == regs[i].list) && (v == regs[i].bits)) {
+    if ((value == regs[reg].list) && (value == regs[reg].bits)) {
         return "= manual";
     }
-    if (v == regs[i].list) {
+    if (value == regs[reg].list) {
         return "= register list";
     }
-    if (v == regs[i].bits) {
+    if (value == regs[reg].bits) {
         return "= bit tables";
     }
     return "differs";
 }
 
-static void print_table(const uint32_t *v, const char *when)
+static void print_table(const uint32_t *values, const char *when)
 {
     printf("%-13s %-10s  %-10s  %-10s  %-10s  %s\n", "register", "address", when,
            "list", "bit table", "result");
-    for (uint32_t i = 0; i < NREGS; i++) {
-        printf("%-13s 0x%08lx  0x%08lx  0x%08lx  0x%08lx  %s", regs[i].name,
-               (unsigned long)regs[i].addr, (unsigned long)v[i],
-               (unsigned long)regs[i].list, (unsigned long)regs[i].bits, verdict(i, v[i]));
-        if (v[i] != regs[i].bits) {
+    for (uint32_t reg = 0; reg < NREGS; reg++) {
+        printf("%-13s 0x%08lx  0x%08lx  0x%08lx  0x%08lx  %s", regs[reg].name,
+               (unsigned long)regs[reg].addr, (unsigned long)values[reg],
+               (unsigned long)regs[reg].list, (unsigned long)regs[reg].bits,
+               verdict(reg, values[reg]));
+        if (values[reg] != regs[reg].bits) {
             printf(" (bits differing from the bit table: 0x%08lx)",
-                   (unsigned long)(v[i] ^ regs[i].bits));
+                   (unsigned long)(values[reg] ^ regs[reg].bits));
         }
         printf("\n");
     }
 }
 
 /* Field-by-field view of the clock registers. */
-static void decode(const uint32_t *v)
+static void decode(const uint32_t *values)
 {
-    uint32_t div = v[3], sel = v[4], st = v[6];
+    uint32_t div = values[3], sel = values[4], status = values[6];
     uint32_t cpu = div & 0xFFu, wlan = (div >> 8) & 0xFFu;
     uint32_t bus2 = (div >> 16) & 0xFFu, peri = (div >> 24) & 0xFu;
 
@@ -183,12 +184,12 @@ static void decode(const uint32_t *v)
            (sel & BIT(6)) ? "80" : "40", (sel & BIT(5)) ? "160" : "80",
            (sel & BIT(4)) ? "160" : "80", (unsigned long)(sel & 0xFu));
     printf("RESET_STATUS: watchdog reset %lu, CPU soft reset %lu\n",
-           (unsigned long)(st & 1u), (unsigned long)((st >> 1) & 1u));
+           (unsigned long)(status & 1u), (unsigned long)((status >> 1) & 1u));
 }
 
-static int probe_kept(uint32_t i)
+static int probe_kept(uint32_t probe)
 {
-    return (probe_ok[i / 32u] >> (i % 32u)) & 1u;
+    return (probe_ok[probe / 32u] >> (probe % 32u)) & 1u;
 }
 
 /* Prints the probed RAM as ranges that kept or lost the pattern. */
@@ -196,22 +197,22 @@ static void print_probe(void)
 {
     uint32_t kept = 0;
 
-    for (uint32_t i = 0; i < probe_count; i++) {
-        kept += probe_kept(i);
+    for (uint32_t probe = 0; probe < probe_count; probe++) {
+        kept += probe_kept(probe);
     }
     printf("\nRAM kept across the last reset: %lu of %lu probes (one every %lu bytes,"
            " 0x%08lx..0x%08lx)\n", (unsigned long)kept, (unsigned long)probe_count,
            (unsigned long)PROBE_STEP, (unsigned long)probe_ptr(0),
            (unsigned long)probe_ptr(probe_count - 1u));
     printf("(after power-on everything reads as lost: that is expected)\n");
-    for (uint32_t i = 0; i < probe_count;) {
-        uint32_t j = i;
-        while ((j < probe_count) && (probe_kept(j) == probe_kept(i))) {
-            j++;
+    for (uint32_t probe = 0; probe < probe_count;) {
+        uint32_t run_end = probe;
+        while ((run_end < probe_count) && (probe_kept(run_end) == probe_kept(probe))) {
+            run_end++;
         }
-        printf("  0x%08lx..0x%08lx  %s\n", (unsigned long)probe_ptr(i),
-               (unsigned long)probe_ptr(j - 1u) + 3u, probe_kept(i) ? "kept" : "lost");
-        i = j;
+        printf("  0x%08lx..0x%08lx  %s\n", (unsigned long)probe_ptr(probe),
+               (unsigned long)probe_ptr(run_end - 1u) + 3u, probe_kept(probe) ? "kept" : "lost");
+        probe = run_end;
     }
 }
 
@@ -219,8 +220,8 @@ static void print_now(void)
 {
     uint32_t now[NREGS];
 
-    for (uint32_t i = 0; i < NREGS; i++) {
-        now[i] = reg_now(i);
+    for (uint32_t reg = 0; reg < NREGS; reg++) {
+        now[reg] = reg_now(reg);
     }
     printf("\nValues now, after init:\n");
     print_table(now, "now");
@@ -255,15 +256,15 @@ int main(void)
 
     printf("\nKeys: w = watchdog reset, c = clear RESET_STATUS, p = print values now\n");
     for (;;) {
-        int c = uart_getc(UART0);
-        if (c == 'w') {
+        int key = uart_getc(UART0);
+        if (key == 'w') {
             printf("watchdog reset...\n");
             uart_flush(UART0);
             wdg_system_reset();
-        } else if (c == 'c') {
+        } else if (key == 'c') {
             reset_status_clear();
             printf("RESET_STATUS cleared, now 0x%08lx\n", (unsigned long)CLK->RST_STATUS);
-        } else if (c == 'p') {
+        } else if (key == 'p') {
             print_now();
         }
     }

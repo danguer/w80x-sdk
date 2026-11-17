@@ -26,25 +26,25 @@
 
 static UART_TypeDef *stdio_uart;
 
-void stdio_set_uart(UART_TypeDef *u)
+void stdio_set_uart(UART_TypeDef *uart)
 {
     if (stdio_uart) {
         uart_flush(stdio_uart);
     }
-    stdio_uart = u;
+    stdio_uart = uart;
 }
 
 /* stdout / stderr: "\n" -> "\r\n" so a plain terminal starts a new line. */
 W80X_WEAK int _write(int fd, const char *buf, int len)
 {
     (void)fd;
-    UART_TypeDef *u = stdio_uart;
-    if (u) {
-        for (int i = 0; i < len; i++) {
-            if (buf[i] == '\n') {
-                uart_putc(u, '\r');
+    UART_TypeDef *uart = stdio_uart;
+    if (uart) {
+        for (int pos = 0; pos < len; pos++) {
+            if (buf[pos] == '\n') {
+                uart_putc(uart, '\r');
             }
-            uart_putc(u, buf[i]);
+            uart_putc(uart, buf[pos]);
         }
     }
     return len;
@@ -56,23 +56,23 @@ W80X_WEAK int _write(int fd, const char *buf, int len)
 W80X_WEAK int _read(int fd, char *buf, int len)
 {
     (void)fd;
-    UART_TypeDef *u = stdio_uart;
-    if (!u || (len <= 0)) {
+    UART_TypeDef *uart = stdio_uart;
+    if (!uart || (len <= 0)) {
         return 0;
     }
 
-    int n = 0;
+    int count = 0;
     do {
-        char c = (char)uart_getc(u);
-        if (c == '\r') {
-            c = '\n';
+        char ch = (char)uart_getc(uart);
+        if (ch == '\r') {
+            ch = '\n';
         }
-        buf[n++] = c;
-        if (c == '\n') {
+        buf[count++] = ch;
+        if (ch == '\n') {
             break;
         }
-    } while ((n < len) && uart_rx_ready(u));
-    return n;
+    } while ((count < len) && uart_rx_ready(uart));
+    return count;
 }
 
 /* Heap: from the end of .bss up to the stack reserve (w80x.ld). */
@@ -91,10 +91,10 @@ W80X_WEAK void *_sbrk(ptrdiff_t incr)
     return prev;
 }
 
-W80X_WEAK int _close(int fd)                 { (void)fd; return -1; }
-W80X_WEAK int _isatty(int fd)                { (void)fd; return 1; }
-W80X_WEAK int _lseek(int fd, int off, int w) { (void)fd; (void)off; (void)w; return 0; }
-W80X_WEAK int _getpid(void)                  { return 1; }
+W80X_WEAK int _close(int fd)                      { (void)fd; return -1; }
+W80X_WEAK int _isatty(int fd)                     { (void)fd; return 1; }
+W80X_WEAK int _lseek(int fd, int off, int whence) { (void)fd; (void)off; (void)whence; return 0; }
+W80X_WEAK int _getpid(void)                       { return 1; }
 
 W80X_WEAK int _fstat(int fd, struct stat *st)
 {

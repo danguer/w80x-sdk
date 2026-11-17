@@ -117,8 +117,8 @@ uint32_t sdcard_set_clock(uint32_t hz);
 
 /* ---- shared helpers (sdcard.c) -------------------------------------------- */
 
-uint8_t  sdcard_crc7(const uint8_t *p, size_t len);              /* command CRC (7 bits) */
-uint16_t sdcard_crc16(uint16_t crc, const void *p, size_t len);  /* data CRC, start with 0 */
+uint8_t  sdcard_crc7(const uint8_t *data, size_t len);              /* command CRC (7 bits) */
+uint16_t sdcard_crc16(uint16_t crc, const void *data, size_t len);  /* data CRC, start with 0 */
 
 /* Capacity in sectors from a CSD. SD: CSD versions 1.0, 2.0 and 3.0 (3.0
  * is clamped to 32 bits). MMC: the CSD C_SIZE only, cards up to 2 GB. */

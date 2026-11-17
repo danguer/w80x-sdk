@@ -87,7 +87,7 @@ int main(void)
         /* Read back which item width the hardware actually used. */
         static const char *const widths[] = { "8", "16", "32", "?" };
         uint32_t ctrl = dma_ch(COPY_CH)->CTRL;
-        const char *w = widths[(ctrl >> DMA_CTRL_WIDTH_Pos) & 3u];
+        const char *width = widths[(ctrl >> DMA_CTRL_WIDTH_Pos) & 3u];
         const char *burst = (ctrl & DMA_CTRL_BURST4) ? "4" : "1";
 
         /* The same copy with 8-bit items, for comparison. */
@@ -103,19 +103,19 @@ int main(void)
 
         printf("round %lu: %u bytes (src %p, dst %p)\n",
                (unsigned long)round, COPY_LEN, (void *)src, (void *)dst);
-        printf("  DMA %s-bit, burst %s: %lu cycles\n", w, burst, (unsigned long)t_dma);
+        printf("  DMA %s-bit, burst %s: %lu cycles\n", width, burst, (unsigned long)t_dma);
         printf("  DMA 8-bit:            %lu cycles\n", (unsigned long)t_dma8);
         printf("  memcpy:               %lu cycles\n", (unsigned long)t_cpu);
         fflush(stdout);
         uart_flush(UART0);
 
         /* 2. UART TX by DMA while the CPU does something else */
-        int n = snprintf(msg, sizeof msg,
+        int msg_len = snprintf(msg, sizeof msg,
                          "  this line went out by DMA (round %lu); the CPU counted meanwhile: ",
                          (unsigned long)round);
         led_off(LED2);
         uart_dma_done = 0;
-        dma_uart_tx(UART_CH, UART0, msg, (uint32_t)n);
+        dma_uart_tx(UART_CH, UART0, msg, (uint32_t)msg_len);
 
         uint32_t spins = 0;
         while (!uart_dma_done) {

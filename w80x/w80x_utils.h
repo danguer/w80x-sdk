@@ -46,11 +46,11 @@ W80X_INLINE uint32_t cpu_cycles_since(uint32_t start)
  * once per CORET wrap (see above) to keep a running total. */
 W80X_INLINE uint32_t cpu_cycles_step(uint32_t *last)
 {
-    uint32_t now = CPU_TICKS;
-    uint32_t d   = (*last - now) & CORET_MAX;  /* down counter */
+    uint32_t now   = CPU_TICKS;
+    uint32_t delta = (*last - now) & CORET_MAX;  /* down counter */
 
     *last = now;
-    return d;
+    return delta;
 }
 
 /* CPU cycles to microseconds / milliseconds at the current CPU clock. */

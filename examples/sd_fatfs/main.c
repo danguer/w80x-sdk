@@ -78,16 +78,16 @@ W80X_IRQ void TIMER_IRQHandler(void)
     }
 }
 
-static const char *fr_str(FRESULT r)
+static const char *fr_str(FRESULT res)
 {
-    static const char *const s[] = {
+    static const char *const names[] = {
         "OK", "DISK_ERR", "INT_ERR", "NOT_READY", "NO_FILE", "NO_PATH",
         "INVALID_NAME", "DENIED", "EXIST", "INVALID_OBJECT", "WRITE_PROTECTED",
         "INVALID_DRIVE", "NOT_ENABLED", "NO_FILESYSTEM", "MKFS_ABORTED",
         "TIMEOUT", "LOCKED", "NOT_ENOUGH_CORE", "TOO_MANY_OPEN_FILES",
         "INVALID_PARAMETER",
     };
-    return ((unsigned)r < (sizeof s / sizeof s[0])) ? s[r] : "?";
+    return ((unsigned)res < (sizeof names / sizeof names[0])) ? names[res] : "?";
 }
 
 static void check_ok(const char *name, int ok)
@@ -101,26 +101,27 @@ static void check_ok(const char *name, int ok)
 /* What the SD layer saw last, if anything went wrong. */
 static void print_diag(void)
 {
-    const sdcard_diag_t *d = sdcard_get_diag();
+    const sdcard_diag_t *diag = sdcard_get_diag();
 
-    if (d->err != SDCARD_OK) {
+    if (diag->err != SDCARD_OK) {
         printf("    sdcard: %s in %s%u (R1 %02x, resp %04lx) at sector %lu; %lu errors so far\n",
-               sdcard_strerror(d->err), (d->cmd & 0x80u) ? "ACMD" : "CMD", d->cmd & 0x7Fu,
-               d->r1, (unsigned long)d->resp, (unsigned long)d->lba, (unsigned long)d->count);
+               sdcard_strerror(diag->err), (diag->cmd & 0x80u) ? "ACMD" : "CMD",
+               diag->cmd & 0x7Fu, diag->r1, (unsigned long)diag->resp, (unsigned long)diag->lba,
+               (unsigned long)diag->count);
     }
 }
 
 /* PASS if r is FR_OK, else FAIL with the FatFs result. Returns 1 for FR_OK. */
-static int check_fr(const char *name, FRESULT r)
+static int check_fr(const char *name, FRESULT res)
 {
-    if (r != FR_OK) {
-        printf("    %s\n", fr_str(r));
-        if ((r == FR_DISK_ERR) || (r == FR_NOT_READY)) {
+    if (res != FR_OK) {
+        printf("    %s\n", fr_str(res));
+        if ((res == FR_DISK_ERR) || (res == FR_NOT_READY)) {
             print_diag();
         }
     }
-    check_ok(name, r == FR_OK);
-    return r == FR_OK;
+    check_ok(name, res == FR_OK);
+    return res == FR_OK;
 }
 
 static void print_rate(uint32_t bytes, uint32_t ms)
@@ -133,20 +134,20 @@ static void print_rate(uint32_t bytes, uint32_t ms)
 }
 
 /* Test pattern: 32-bit words that depend on the byte offset in the file. */
-static void fill_pattern(uint8_t *p, uint32_t len, uint32_t offset)
+static void fill_pattern(uint8_t *buf, uint32_t len, uint32_t offset)
 {
-    for (uint32_t i = 0; i < len; i += 4) {
-        uint32_t v = ((offset + i) * 2654435761u) ^ 0xA5A5A5A5u;
-        memcpy(p + i, &v, 4);
+    for (uint32_t pos = 0; pos < len; pos += 4) {
+        uint32_t word = ((offset + pos) * 2654435761u) ^ 0xA5A5A5A5u;
+        memcpy(buf + pos, &word, 4);
     }
 }
 
-static int check_pattern(const uint8_t *p, uint32_t len, uint32_t offset)
+static int check_pattern(const uint8_t *buf, uint32_t len, uint32_t offset)
 {
-    for (uint32_t i = 0; i < len; i += 4) {
-        uint32_t v = ((offset + i) * 2654435761u) ^ 0xA5A5A5A5u;
-        if (memcmp(p + i, &v, 4) != 0) {
-            printf("    mismatch at offset %lu\n", (unsigned long)(offset + i));
+    for (uint32_t pos = 0; pos < len; pos += 4) {
+        uint32_t word = ((offset + pos) * 2654435761u) ^ 0xA5A5A5A5u;
+        if (memcmp(buf + pos, &word, 4) != 0) {
+            printf("    mismatch at offset %lu\n", (unsigned long)(offset + pos));
             return 0;
         }
     }
@@ -185,7 +186,7 @@ static void crc_test(void)
     check_ok("CRC16 of an erased block", sdcard_crc16(0, buf, SDCARD_SECTOR_SIZE) == 0x7FA1u);
 
     uint32_t t0 = CPU_TICKS;
-    for (int i = 0; i < 16; i++) {
+    for (int run = 0; run < 16; run++) {
         sdcard_crc16(0, buf, SDCARD_SECTOR_SIZE);
     }
     uint32_t cyc = cpu_cycles_since(t0) / 16u;
@@ -197,25 +198,25 @@ static void crc_test(void)
 static void raw_read_test(void)
 {
     const sdcard_info_t *ci = sdcard_get_info();
-    uint32_t n = (ci->sectors < 2048u) ? ci->sectors : 2048u;
+    uint32_t sectors = (ci->sectors < 2048u) ? ci->sectors : 2048u;
     uint32_t per = sizeof buf / SDCARD_SECTOR_SIZE;
-    int r = sdcard_read(0, buf, 1);
+    int err = sdcard_read(0, buf, 1);
 
-    check_ok("read sector 0", r == SDCARD_OK);
-    if (r == SDCARD_OK) {
+    check_ok("read sector 0", err == SDCARD_OK);
+    if (err == SDCARD_OK) {
         printf("    signature %02x %02x (55 aa = MBR or boot sector)\n", buf[510], buf[511]);
     }
 
     uint32_t t0 = ms_ticks;
-    for (uint32_t s = 0; (s < n) && (r == SDCARD_OK); s += per) {
-        r = sdcard_read(s, buf, ((n - s) < per) ? (n - s) : per);
+    for (uint32_t lba = 0; (lba < sectors) && (err == SDCARD_OK); lba += per) {
+        err = sdcard_read(lba, buf, ((sectors - lba) < per) ? (sectors - lba) : per);
     }
     uint32_t ms = ms_ticks - t0;
-    if (r != SDCARD_OK) {
+    if (err != SDCARD_OK) {
         print_diag();
     }
-    check_ok("raw read, 8 KB multi-block", r == SDCARD_OK);
-    print_rate(n * SDCARD_SECTOR_SIZE, ms);
+    check_ok("raw read, 8 KB multi-block", err == SDCARD_OK);
+    print_rate(sectors * SDCARD_SECTOR_SIZE, ms);
 }
 
 /* Read the last 16 sectors, write them back (one single-block and one
@@ -223,20 +224,20 @@ static void raw_read_test(void)
 static int rewrite_once(void)
 {
     const sdcard_info_t *ci = sdcard_get_info();
-    uint32_t n = sizeof buf / SDCARD_SECTOR_SIZE;
-    uint32_t lba = ci->sectors - n;
+    uint32_t count = sizeof buf / SDCARD_SECTOR_SIZE;
+    uint32_t lba = ci->sectors - count;
 
-    int r = sdcard_read(lba, buf, n);
-    if (r == SDCARD_OK) {
-        r = sdcard_write(lba, buf, 1);
+    int err = sdcard_read(lba, buf, count);
+    if (err == SDCARD_OK) {
+        err = sdcard_write(lba, buf, 1);
     }
-    if (r == SDCARD_OK) {
-        r = sdcard_write(lba + 1u, buf + SDCARD_SECTOR_SIZE, n - 1u);
+    if (err == SDCARD_OK) {
+        err = sdcard_write(lba + 1u, buf + SDCARD_SECTOR_SIZE, count - 1u);
     }
-    if (r == SDCARD_OK) {
-        r = sdcard_read(lba, chk, n);
+    if (err == SDCARD_OK) {
+        err = sdcard_read(lba, chk, count);
     }
-    if (r != SDCARD_OK) {
+    if (err != SDCARD_OK) {
         print_diag();
         return 0;
     }
@@ -255,11 +256,11 @@ static void raw_write_test(void)
     uint32_t full = sdcard_get_info()->clock_hz;
     char name[48];
 
-    for (uint32_t i = 0; i < (sizeof rates / sizeof rates[0]); i++) {
-        if (rates[i] > full) {
+    for (uint32_t idx = 0; idx < (sizeof rates / sizeof rates[0]); idx++) {
+        if (rates[idx] > full) {
             continue;
         }
-        uint32_t hz = sdcard_set_clock(rates[i]);
+        uint32_t hz = sdcard_set_clock(rates[idx]);
         snprintf(name, sizeof name, "raw rewrite, SCK %lu kHz", (unsigned long)(hz / 1000u));
         int ok = rewrite_once();
         printf("%-40s %s\n", name, ok ? "PASS" : "FAIL");
@@ -279,21 +280,21 @@ static void raw_write_test(void)
 
 static int mount(void)
 {
-    FRESULT r = f_mount(&fs, "", 1);
+    FRESULT res = f_mount(&fs, "", 1);
 
-    if ((r == FR_NO_FILESYSTEM) && SD_FORMAT) {
+    if ((res == FR_NO_FILESYSTEM) && SD_FORMAT) {
         static const MKFS_PARM opt = { FM_ANY, 0, 0, 0, 0 };
         printf("no file system: formatting (SD_FORMAT=1)...\n");
-        r = f_mkfs("", &opt, buf, sizeof buf);
-        check_fr("f_mkfs", r);
-        if (r == FR_OK) {
-            r = f_mount(&fs, "", 1);
+        res = f_mkfs("", &opt, buf, sizeof buf);
+        check_fr("f_mkfs", res);
+        if (res == FR_OK) {
+            res = f_mount(&fs, "", 1);
         }
-    } else if (r == FR_NO_FILESYSTEM) {
+    } else if (res == FR_NO_FILESYSTEM) {
         printf("    no FAT/exFAT file system on the card; build with "
                "CFLAGS=-DSD_FORMAT=1 to format it (erases the card)\n");
     }
-    return check_fr("f_mount", r);
+    return check_fr("f_mount", res);
 }
 
 static void volume_info(void)
@@ -321,33 +322,43 @@ static void list_root(void)
 {
     DIR dir;
     FILINFO fno;
-    int n = 0;
+    int count = 0;
 
-    FRESULT r = f_opendir(&dir, "/");
-    if (r == FR_OK) {
+    FRESULT res = f_opendir(&dir, "/");
+    if (res == FR_OK) {
         printf("root directory:\n");
-        while (((r = f_readdir(&dir, &fno)) == FR_OK) && fno.fname[0]) {
+        while (((res = f_readdir(&dir, &fno)) == FR_OK) && fno.fname[0]) {
             if (fno.fattrib & AM_DIR) {
                 printf("    %-32s  <dir>\n", fno.fname);
             } else {
                 printf("    %-32s  %10lu\n", fno.fname, (unsigned long)fno.fsize);
             }
-            if (++n >= 30) {
+            if (++count >= 30) {
                 printf("    ...\n");
                 break;
             }
         }
         f_closedir(&dir);
     }
-    check_fr("list /", r);
+    check_fr("list /", res);
 }
 
 /* ---- RTC ---------------------------------------------------------------- */
 
-static void fmt_time(char *s, size_t n, const struct tm *t)
+static void fmt_time(char *out, size_t size, const struct tm *tm)
 {
-    snprintf(s, n, "%04d-%02d-%02d %02d:%02d:%02d", t->tm_year + 1900, t->tm_mon + 1,
-             t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+    snprintf(out, size, "%04d-%02d-%02d %02d:%02d:%02d", tm->tm_year + 1900, tm->tm_mon + 1,
+             tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+}
+
+/* Decimal value of count digits at str; a space counts as 0 ("Nov  6"). */
+static int parse_digits(const char *str, int count)
+{
+    int value = 0;
+    for (int pos = 0; pos < count; pos++) {
+        value = (value * 10) + ((str[pos] == ' ') ? 0 : (str[pos] - '0'));
+    }
+    return value;
 }
 
 /* Start the RTC at the build time (__DATE__ "Nov 16 2026", __TIME__
@@ -355,92 +366,90 @@ static void fmt_time(char *s, size_t n, const struct tm *t)
 static void rtc_start(void)
 {
     static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-    const char *d = __DATE__, *tm = __TIME__;
-    char s[24];
+    const char *build_date = __DATE__, *build_time = __TIME__;
+    char text[24];
     int kept = rtc_is_running();
 
     if (!kept) {
         int mon = 0;
-        while ((mon < 12) && (strncmp(&months[mon * 3], d, 3) != 0)) {
+        while ((mon < 12) && (strncmp(&months[mon * 3], build_date, 3) != 0)) {
             mon++;
         }
-        struct tm t = rtc_tm(((d[7] - '0') * 1000) + ((d[8] - '0') * 100) + ((d[9] - '0') * 10) + (d[10] - '0'),
-                             mon + 1, ((d[4] == ' ') ? 0 : ((d[4] - '0') * 10)) + (d[5] - '0'),
-                             ((tm[0] - '0') * 10) + (tm[1] - '0'), ((tm[3] - '0') * 10) + (tm[4] - '0'),
-                             ((tm[6] - '0') * 10) + (tm[7] - '0'));
-        if (rtc_set_time(&t) != 0) {
+        struct tm build = rtc_tm(parse_digits(build_date + 7, 4), mon + 1,
+                                 parse_digits(build_date + 4, 2), parse_digits(build_time, 2),
+                                 parse_digits(build_time + 3, 2), parse_digits(build_time + 6, 2));
+        if (rtc_set_time(&build) != 0) {
             rtc_init();
         }
     }
     struct tm now;
     rtc_get_time(&now);
-    fmt_time(s, sizeof s, &now);
-    printf("RTC: %s (%s)\n", s, kept ? "kept through the reset" : "set to the build time");
+    fmt_time(text, sizeof text, &now);
+    printf("RTC: %s (%s)\n", text, kept ? "kept through the reset" : "set to the build time");
 }
 
-/* Write DATA_SIZE bytes, read them back, check, seek, delete. */
 static void file_test(void)
 {
     UINT bw, br;
-    FRESULT r = f_open(&fil, DATA_FILE, FA_CREATE_ALWAYS | FA_WRITE);
+    FRESULT res = f_open(&fil, DATA_FILE, FA_CREATE_ALWAYS | FA_WRITE);
     uint32_t t0, ms;
 
-    if (!check_fr("create " DATA_FILE, r)) {
+    if (!check_fr("create " DATA_FILE, res)) {
         return;
     }
     t0 = ms_ticks;
-    for (uint32_t off = 0; (off < DATA_SIZE) && (r == FR_OK); off += sizeof buf) {
+    for (uint32_t off = 0; (off < DATA_SIZE) && (res == FR_OK); off += sizeof buf) {
         fill_pattern(buf, sizeof buf, off);
-        r = f_write(&fil, buf, sizeof buf, &bw);
-        if ((r == FR_OK) && (bw != sizeof buf)) {
+        res = f_write(&fil, buf, sizeof buf, &bw);
+        if ((res == FR_OK) && (bw != sizeof buf)) {
             printf("    disk full\n");
-            r = FR_DENIED;
+            res = FR_DENIED;
         }
     }
-    if (r == FR_OK) {
-        r = f_close(&fil);
+    if (res == FR_OK) {
+        res = f_close(&fil);
     } else {
         f_close(&fil);
     }
     ms = ms_ticks - t0;
-    if (!check_fr("write 1 MB in 8 KB pieces", r)) {
+    if (!check_fr("write 1 MB in 8 KB pieces", res)) {
         f_unlink(DATA_FILE);
         return;
     }
     print_rate(DATA_SIZE, ms);
 
     FILINFO fno;
-    r = f_stat(DATA_FILE, &fno);
-    check_ok("f_stat size", (r == FR_OK) && (fno.fsize == DATA_SIZE));
+    res = f_stat(DATA_FILE, &fno);
+    check_ok("f_stat size", (res == FR_OK) && (fno.fsize == DATA_SIZE));
 
     /* timestamp written at f_close(), from get_fattime() (2 s resolution) */
     struct tm stamp = rtc_tm(1980 + (fno.fdate >> 9), (fno.fdate >> 5) & 15u, fno.fdate & 31u,
                              fno.ftime >> 11, (fno.ftime >> 5) & 63u, (fno.ftime & 31u) * 2u);
-    char s[24];
-    fmt_time(s, sizeof s, &stamp);
+    char text[24];
+    fmt_time(text, sizeof text, &stamp);
     time_t age = rtc_get_unix() - rtc_timegm(&stamp);
-    printf("    file time %s, %ld s ago\n", s, (long)age);
-    check_ok("file time is the RTC time", (r == FR_OK) && (age >= 0) && (age <= 5));
+    printf("    file time %s, %ld s ago\n", text, (long)age);
+    check_ok("file time is the RTC time", (res == FR_OK) && (age >= 0) && (age <= 5));
 
     int ok = 1;
-    r = f_open(&fil, DATA_FILE, FA_READ);
+    res = f_open(&fil, DATA_FILE, FA_READ);
     t0 = ms_ticks;
-    for (uint32_t off = 0; (off < DATA_SIZE) && (r == FR_OK) && ok; off += sizeof buf) {
-        r = f_read(&fil, buf, sizeof buf, &br);
-        ok = (r == FR_OK) && (br == sizeof buf) && check_pattern(buf, sizeof buf, off);
+    for (uint32_t off = 0; (off < DATA_SIZE) && (res == FR_OK) && ok; off += sizeof buf) {
+        res = f_read(&fil, buf, sizeof buf, &br);
+        ok = (res == FR_OK) && (br == sizeof buf) && check_pattern(buf, sizeof buf, off);
     }
     ms = ms_ticks - t0;
-    check_fr("read back", r);
+    check_fr("read back", res);
     check_ok("data matches", ok);
     print_rate(DATA_SIZE, ms);
 
     /* unaligned seeks and short reads */
     static const uint32_t offs[] = { 4, 511 * 4, 12345 * 4, (DATA_SIZE / 2u) + 4u, DATA_SIZE - 100u };
-    ok = (r == FR_OK);
-    for (uint32_t i = 0; ok && (i < (sizeof offs / sizeof offs[0])); i++) {
-        ok = (f_lseek(&fil, offs[i]) == FR_OK) &&
+    ok = (res == FR_OK);
+    for (uint32_t idx = 0; ok && (idx < (sizeof offs / sizeof offs[0])); idx++) {
+        ok = (f_lseek(&fil, offs[idx]) == FR_OK) &&
              (f_read(&fil, buf, 100, &br) == FR_OK) && (br == 100u) &&
-             check_pattern(buf, 100, offs[i]);
+             check_pattern(buf, 100, offs[idx]);
     }
     check_ok("f_lseek + short reads", ok);
     f_close(&fil);
@@ -452,22 +461,23 @@ static void file_test(void)
 static void lfn_test(void)
 {
     char line[64];
-    UINT n = 0;
+    UINT found = 0;
 
-    FRESULT r = f_open(&fil, LFN_FILE, FA_CREATE_ALWAYS | FA_WRITE);
-    if (r == FR_OK) {
+    FRESULT res = f_open(&fil, LFN_FILE, FA_CREATE_ALWAYS | FA_WRITE);
+    if (res == FR_OK) {
         f_printf(&fil, "hello from the W80x, %d %s\n", 42, "fatfs");
-        r = f_close(&fil);
+        res = f_close(&fil);
     }
-    check_fr("create long file name", r);
+    check_fr("create long file name", res);
 
     line[0] = '\0';
-    r = f_open(&fil, LFN_FILE, FA_READ);
-    if (r == FR_OK) {
+    res = f_open(&fil, LFN_FILE, FA_READ);
+    if (res == FR_OK) {
         f_gets(line, sizeof line, &fil);
         f_close(&fil);
     }
-    check_ok("f_printf / f_gets", (r == FR_OK) && (strcmp(line, "hello from the W80x, 42 fatfs\n") == 0));
+    check_ok("f_printf / f_gets",
+             (res == FR_OK) && (strcmp(line, "hello from the W80x, 42 fatfs\n") == 0));
 
     f_unlink(LFN_RENAMED);
     check_fr("f_rename", f_rename(LFN_FILE, LFN_RENAMED));
@@ -475,10 +485,10 @@ static void lfn_test(void)
     DIR dir;
     FILINFO fno;
     if (f_findfirst(&dir, &fno, TEST_DIR, "renamed*") == FR_OK) {
-        n = fno.fname[0] ? 1u : 0u;
+        found = fno.fname[0] ? 1u : 0u;
         f_closedir(&dir);
     }
-    check_ok("f_findfirst finds it", n == 1u);
+    check_ok("f_findfirst finds it", found == 1u);
     check_fr("delete it", f_unlink(LFN_RENAMED));
 }
 
@@ -488,20 +498,21 @@ static void boot_counter(void)
     char line[48];
     unsigned boots = 0;
 
-    FRESULT r = f_open(&fil, BOOT_FILE, FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
-    if (r == FR_OK) {
+    FRESULT res = f_open(&fil, BOOT_FILE, FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
+    if (res == FR_OK) {
         while (f_gets(line, sizeof line, &fil)) {
             boots++;
         }
         /* f_gets left the pointer at the end */
         struct tm now;
-        char s[24];
+        char text[24];
         rtc_get_time(&now);
-        fmt_time(s, sizeof s, &now);
-        f_printf(&fil, "boot %u at %s, %lu ms after reset\n", boots + 1u, s, (unsigned long)ms_ticks);
-        r = f_close(&fil);
+        fmt_time(text, sizeof text, &now);
+        f_printf(&fil, "boot %u at %s, %lu ms after reset\n", boots + 1u, text,
+                 (unsigned long)ms_ticks);
+        res = f_close(&fil);
     }
-    if (check_fr("append to " BOOT_FILE, r)) {
+    if (check_fr("append to " BOOT_FILE, res)) {
         printf("    this is boot %u with this card\n", boots + 1u);
     }
 }
@@ -527,22 +538,22 @@ int main(void)
     rtc_start();
     printf("\n");
 
-    int r = sdcard_init();
-    if (r != SDCARD_OK) {
+    int err = sdcard_init();
+    if (err != SDCARD_OK) {
         print_diag();
     }
-    check_ok("sdcard_init", r == SDCARD_OK);
+    check_ok("sdcard_init", err == SDCARD_OK);
 
     crc_test();
-    if (r == SDCARD_OK) {
+    if (err == SDCARD_OK) {
         card_info();
         raw_read_test();
         raw_write_test();
         if (mount()) {
             volume_info();
             list_root();
-            FRESULT d = f_mkdir(TEST_DIR);
-            if (check_fr("mkdir " TEST_DIR, (d == FR_EXIST) ? FR_OK : d)) {
+            FRESULT res = f_mkdir(TEST_DIR);
+            if (check_fr("mkdir " TEST_DIR, (res == FR_EXIST) ? FR_OK : res)) {
                 file_test();
                 lfn_test();
                 boot_counter();

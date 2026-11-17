@@ -93,11 +93,11 @@
 
 /* Data blocks: DMA or the FIFO copy. */
 #if SDCARD_SPI_DMA
-#define data_read(buf, n)   spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, NULL, (buf), (n))
-#define data_write(buf, n)  spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, (buf), NULL, (n))
+#define data_read(buf, len)  spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, NULL, (buf), (len))
+#define data_write(buf, len) spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, (buf), NULL, (len))
 #else
-#define data_read(buf, n)   spi_read((buf), (n))
-#define data_write(buf, n)  spi_write((buf), (n))
+#define data_read(buf, len)  spi_read((buf), (len))
+#define data_write(buf, len) spi_write((buf), (len))
 #endif
 
 /* Commands. ACMDs have bit 7 set: sd_cmd() sends CMD55 first. */
@@ -169,17 +169,17 @@ typedef struct {
     uint32_t limit;
 } tmo_t;
 
-static void tmo_start(tmo_t *t, uint32_t ms)
+static void tmo_start(tmo_t *tmo, uint32_t ms)
 {
-    t->last = CPU_TICKS;
-    t->elapsed = 0;
-    t->limit = cpu_ms_to_cycles(ms);
+    tmo->last = CPU_TICKS;
+    tmo->elapsed = 0;
+    tmo->limit = cpu_ms_to_cycles(ms);
 }
 
-static int tmo_expired(tmo_t *t)
+static int tmo_expired(tmo_t *tmo)
 {
-    t->elapsed += cpu_cycles_step(&t->last);
-    return t->elapsed >= t->limit;
+    tmo->elapsed += cpu_cycles_step(&tmo->last);
+    return tmo->elapsed >= tmo->limit;
 }
 
 /* ---- bus ------------------------------------------------------------------------ */
@@ -192,11 +192,11 @@ static uint8_t rx_byte(void)
 /* Wait until the card stops holding MISO low (busy). 1 = ready. */
 static int wait_ready(uint32_t ms)
 {
-    tmo_t t;
+    tmo_t tmo;
 
-    tmo_start(&t, ms);
+    tmo_start(&tmo, ms);
     while (rx_byte() != 0xFFu) {
-        if (tmo_expired(&t)) {
+        if (tmo_expired(&tmo)) {
             return 0;
         }
     }
@@ -226,15 +226,15 @@ static int select_card(void)
  * deselect() when done. */
 static uint8_t sd_cmd(uint8_t cmd, uint32_t arg)
 {
-    uint8_t r = 0xFFu;
+    uint8_t r1 = 0xFFu;
     uint8_t name = cmd;
 
     if (cmd & 0x80u) {
         cmd &= 0x7Fu;
-        r = sd_cmd(CMD55, 0);
+        r1 = sd_cmd(CMD55, 0);
         last_cmd = name;
-        if (r > R1_IDLE) {
-            return r;
+        if (r1 > R1_IDLE) {
+            return r1;
         }
     }
     last_cmd = name;
@@ -246,38 +246,38 @@ static uint8_t sd_cmd(uint8_t cmd, uint32_t arg)
         }
     }
 
-    uint8_t f[6];
-    f[0] = (uint8_t)(0x40u | cmd);
-    f[1] = (uint8_t)(arg >> 24);
-    f[2] = (uint8_t)(arg >> 16);
-    f[3] = (uint8_t)(arg >> 8);
-    f[4] = (uint8_t)arg;
-    f[5] = (uint8_t)((sdcard_crc7(f, 5) << 1) | 1u);
-    spi_write(f, sizeof f);
+    uint8_t frame[6];
+    frame[0] = (uint8_t)(0x40u | cmd);
+    frame[1] = (uint8_t)(arg >> 24);
+    frame[2] = (uint8_t)(arg >> 16);
+    frame[3] = (uint8_t)(arg >> 8);
+    frame[4] = (uint8_t)arg;
+    frame[5] = (uint8_t)((sdcard_crc7(frame, 5) << 1) | 1u);
+    spi_write(frame, sizeof frame);
 
     if (cmd == CMD12) {
         rx_byte();              /* stuff byte */
     }
     /* R1 comes within 8 bytes (NCR); bit 7 is 0 in a response */
-    for (int n = 0; n < 10; n++) {
-        r = rx_byte();
-        if (!(r & 0x80u)) {
+    for (int tries = 0; tries < 10; tries++) {
+        r1 = rx_byte();
+        if (!(r1 & 0x80u)) {
             break;
         }
     }
-    last_r1 = r;
-    return r;
+    last_r1 = r1;
+    return r1;
 }
 
 /* Receive a data block of len bytes after a read command. */
 static int rx_block(uint8_t *buf, uint32_t len)
 {
-    tmo_t t;
+    tmo_t tmo;
     uint8_t tok;
 
-    tmo_start(&t, TMO_READ_MS);
+    tmo_start(&tmo, TMO_READ_MS);
     while ((tok = rx_byte()) == 0xFFu) {
-        if (tmo_expired(&t)) {
+        if (tmo_expired(&tmo)) {
             return fail(SDCARD_ERR_TIMEOUT, tok);
         }
     }
@@ -287,10 +287,10 @@ static int rx_block(uint8_t *buf, uint32_t len)
     if (data_read(buf, len)) {
         return fail(SDCARD_ERR_TIMEOUT, tok);
     }
-    uint8_t c[2];
-    spi_read(c, 2);
+    uint8_t crc_bytes[2];
+    spi_read(crc_bytes, 2);
 #if SDCARD_SPI_CRC
-    uint16_t got = (uint16_t)(((uint16_t)c[0] << 8) | c[1]);
+    uint16_t got = (uint16_t)(((uint16_t)crc_bytes[0] << 8) | crc_bytes[1]);
     if (got != sdcard_crc16(0, buf, len)) {
         return fail(SDCARD_ERR_CRC, got);
     }
@@ -307,11 +307,11 @@ static int tx_block(const uint8_t *buf, uint8_t token)
     spi_xfer(token);
 
     uint16_t crc = SDCARD_SPI_CRC ? sdcard_crc16(0, buf, SDCARD_SECTOR_SIZE) : 0xFFFFu;
-    uint8_t c[2] = { (uint8_t)(crc >> 8), (uint8_t)crc };
+    uint8_t crc_bytes[2] = { (uint8_t)(crc >> 8), (uint8_t)crc };
     if (data_write(buf, SDCARD_SECTOR_SIZE)) {
         return fail(SDCARD_ERR_TIMEOUT, 0xFFu);
     }
-    spi_write(c, 2);
+    spi_write(crc_bytes, 2);
 
     uint8_t resp = rx_byte();           /* data response: xxx0sss1 */
     if ((resp & 0x1Fu) == 0x05u) {
@@ -341,17 +341,17 @@ static int stop_write(void)
 /* Read a register (CSD, CID) sent as a 16-byte data block. */
 static int read_reg(uint8_t cmd, uint8_t out[16])
 {
-    int r = (sd_cmd(cmd, 0) == 0) ? rx_block(out, 16) : fail(SDCARD_ERR_CMD, 0xFFu);
+    int err = (sd_cmd(cmd, 0) == 0) ? rx_block(out, 16) : fail(SDCARD_ERR_CMD, 0xFFu);
     deselect();
-    return r;
+    return err;
 }
 
 static uint32_t read_ocr(void)
 {
-    uint8_t o[4] = { 0 };
+    uint8_t ocr[4] = { 0 };
 
-    spi_read(o, 4);
-    return ((uint32_t)o[0] << 24) | ((uint32_t)o[1] << 16) | ((uint32_t)o[2] << 8) | o[3];
+    spi_read(ocr, 4);
+    return ((uint32_t)ocr[0] << 24) | ((uint32_t)ocr[1] << 16) | ((uint32_t)ocr[2] << 8) | ocr[3];
 }
 
 /* Allocation unit from the SD status (ACMD13), in sectors; 0 if unknown. */
@@ -424,33 +424,33 @@ static void unstick(void)
 static int init_card(void)
 {
     sdcard_type_t type = SDCARD_TYPE_NONE;
-    uint8_t r = 0xFFu;
-    tmo_t t;
+    uint8_t r1 = 0xFFu;
+    tmo_t tmo;
 
     /* 74+ clocks with CS high (and MOSI high) put the card in native mode,
      * ready for CMD0 */
     gpio_set(SDCARD_SPI_CS);
-    for (int i = 0; i < 10; i++) {
+    for (int byte = 0; byte < 10; byte++) {
         rx_byte();
     }
 
     /* CMD0 with CS low switches to SPI mode. If the card does not answer,
      * it may be stuck in a transfer from before a reset: end that, retry. */
-    for (int i = 0; (i < 3) && (r != R1_IDLE); i++) {
-        r = sd_cmd(CMD0, 0);
+    for (int tries = 0; (tries < 3) && (r1 != R1_IDLE); tries++) {
+        r1 = sd_cmd(CMD0, 0);
     }
-    for (int i = 0; (i < 10) && (r != R1_IDLE); i++) {
-        if ((i % 5) == 0) {
+    for (int tries = 0; (tries < 10) && (r1 != R1_IDLE); tries++) {
+        if ((tries % 5) == 0) {
             unstick();
         }
-        r = sd_cmd(CMD0, 0);
+        r1 = sd_cmd(CMD0, 0);
     }
-    if (r != R1_IDLE) {
+    if (r1 != R1_IDLE) {
         deselect();
-        return fail(SDCARD_ERR_NOCARD, r);
+        return fail(SDCARD_ERR_NOCARD, r1);
     }
 
-    tmo_start(&t, TMO_INIT_MS);
+    tmo_start(&tmo, TMO_INIT_MS);
     if (sd_cmd(CMD8, 0x1AAu) == R1_IDLE) {
         /* SD v2+: R7 echoes the check pattern and voltage range */
         uint32_t r7 = read_ocr();
@@ -458,10 +458,10 @@ static int init_card(void)
             deselect();
             return fail(SDCARD_ERR_UNUSABLE, r7);
         }
-        while ((r = sd_cmd(ACMD41, 1uL << 30)) != 0) {     /* HCS: we take SDHC */
-            if ((r > R1_IDLE) || tmo_expired(&t)) {
+        while ((r1 = sd_cmd(ACMD41, 1uL << 30)) != 0) {     /* HCS: we take SDHC */
+            if ((r1 > R1_IDLE) || tmo_expired(&tmo)) {
                 deselect();
-                return fail(SDCARD_ERR_TIMEOUT, r);
+                return fail(SDCARD_ERR_TIMEOUT, r1);
             }
         }
         if (sd_cmd(CMD58, 0) != 0) {
@@ -478,10 +478,10 @@ static int init_card(void)
             op = ACMD41;
             type = SDCARD_TYPE_SDV1;
         }
-        while ((r = sd_cmd(op, 0)) != 0) {
-            if ((r > R1_IDLE) || tmo_expired(&t)) {
+        while ((r1 = sd_cmd(op, 0)) != 0) {
+            if ((r1 > R1_IDLE) || tmo_expired(&tmo)) {
                 deselect();
-                return fail((r > R1_IDLE) ? SDCARD_ERR_UNUSABLE : SDCARD_ERR_TIMEOUT, r);
+                return fail((r1 > R1_IDLE) ? SDCARD_ERR_UNUSABLE : SDCARD_ERR_TIMEOUT, r1);
             }
         }
         if (sd_cmd(CMD58, 0) == 0) {
@@ -505,7 +505,7 @@ static int init_card(void)
 
 int sdcard_init(void)
 {
-    int r;
+    int err;
 
     ready = 0;
     cur_lba = 0;
@@ -530,16 +530,16 @@ int sdcard_init(void)
 #endif
     delay_ms(2);                                    /* power-up time */
 
-    r = init_card();
-    if (r == SDCARD_OK) {
-        r = read_reg(CMD9, info.csd);
+    err = init_card();
+    if (err == SDCARD_OK) {
+        err = read_reg(CMD9, info.csd);
     }
-    if (r == SDCARD_OK) {
-        r = read_reg(CMD10, info.cid);
+    if (err == SDCARD_OK) {
+        err = read_reg(CMD10, info.cid);
     }
-    if (r != SDCARD_OK) {
+    if (err != SDCARD_OK) {
         info.type = SDCARD_TYPE_NONE;
-        return r;
+        return err;
     }
 
     info.sectors = sdcard_csd_sectors(info.csd, info.type);
@@ -575,21 +575,21 @@ static int check_range(uint32_t lba, uint32_t count)
 /* One attempt; *done = sectors read successfully. */
 static int read_blocks(uint32_t lba, uint8_t *buf, uint32_t count, uint32_t *done)
 {
-    int r = SDCARD_OK;
+    int err = SDCARD_OK;
 
     *done = 0;
     cur_lba = lba;
     if (count == 1u) {
-        r = (sd_cmd(CMD17, card_addr(lba)) == 0) ? rx_block(buf, SDCARD_SECTOR_SIZE)
+        err = (sd_cmd(CMD17, card_addr(lba)) == 0) ? rx_block(buf, SDCARD_SECTOR_SIZE)
                                                  : fail(SDCARD_ERR_CMD, 0xFFu);
-        if (r == SDCARD_OK) {
+        if (err == SDCARD_OK) {
             *done = 1;
         }
     } else if (sd_cmd(CMD18, card_addr(lba)) == 0) {
         while (*done < count) {
             cur_lba = lba + *done;
-            r = rx_block(buf, SDCARD_SECTOR_SIZE);
-            if (r != SDCARD_OK) {
+            err = rx_block(buf, SDCARD_SECTOR_SIZE);
+            if (err != SDCARD_OK) {
                 break;
             }
             buf += SDCARD_SECTOR_SIZE;
@@ -597,8 +597,8 @@ static int read_blocks(uint32_t lba, uint8_t *buf, uint32_t count, uint32_t *don
         }
         sd_cmd(CMD12, 0);
         /* the card may stay busy briefly after the stop */
-        if (!wait_ready(TMO_WRITE_MS) && (r == SDCARD_OK)) {
-            r = fail(SDCARD_ERR_TIMEOUT, 0x00u);
+        if (!wait_ready(TMO_WRITE_MS) && (err == SDCARD_OK)) {
+            err = fail(SDCARD_ERR_TIMEOUT, 0x00u);
         }
         /* Reading up to the last sector may set OUT_OF_RANGE (the spec says
          * to ignore it). The flag stays until the status is read, and the
@@ -609,67 +609,67 @@ static int read_blocks(uint32_t lba, uint8_t *buf, uint32_t count, uint32_t *don
             rx_byte();
         }
     } else {
-        r = fail(SDCARD_ERR_CMD, 0xFFu);
+        err = fail(SDCARD_ERR_CMD, 0xFFu);
     }
     deselect();
-    return r;
+    return err;
 }
 
 int sdcard_read(uint32_t lba, void *buf, uint32_t count)
 {
-    uint8_t *p = (uint8_t *)buf;
-    int r = check_range(lba, count);
+    uint8_t *pos = (uint8_t *)buf;
+    int err = check_range(lba, count);
 
-    for (int tries = 0; (r == SDCARD_OK) && (count > 0u); ) {
+    for (int tries = 0; (err == SDCARD_OK) && (count > 0u); ) {
         uint32_t done;
-        r = read_blocks(lba, p, count, &done);
+        err = read_blocks(lba, pos, count, &done);
         lba += done;
-        p += done * SDCARD_SECTOR_SIZE;
+        pos += done * SDCARD_SECTOR_SIZE;
         count -= done;
         if (done) {
             tries = 0;                  /* progress: start counting afresh */
         }
-        if (((r == SDCARD_ERR_CRC) || (r == SDCARD_ERR_TIMEOUT)) &&
+        if (((err == SDCARD_ERR_CRC) || (err == SDCARD_ERR_TIMEOUT)) &&
             (++tries < SDCARD_SPI_RETRIES)) {
-            r = SDCARD_OK;
+            err = SDCARD_OK;
         }
     }
-    return r;
+    return err;
 }
 
 /* One attempt at writing count sectors. */
-static int write_blocks(uint32_t lba, const uint8_t *p, uint32_t count)
+static int write_blocks(uint32_t lba, const uint8_t *pos, uint32_t count)
 {
-    int r = SDCARD_OK;
+    int err = SDCARD_OK;
 
     cur_lba = lba;
     if (count == 1u) {
-        r = (sd_cmd(CMD24, card_addr(lba)) == 0) ? tx_block(p, TOKEN_START)
+        err = (sd_cmd(CMD24, card_addr(lba)) == 0) ? tx_block(pos, TOKEN_START)
                                                  : fail(SDCARD_ERR_CMD, 0xFFu);
     } else {
         if (info.type != SDCARD_TYPE_MMC) {
             sd_cmd(ACMD23, count);      /* pre-erase hint, speeds up the write */
         }
         if (sd_cmd(CMD25, card_addr(lba)) != 0) {
-            r = fail(SDCARD_ERR_CMD, 0xFFu);
+            err = fail(SDCARD_ERR_CMD, 0xFFu);
         } else {
-            for (uint32_t i = 0; (r == SDCARD_OK) && (i < count); i++) {
-                cur_lba = lba + i;
-                r = tx_block(p, TOKEN_START_MULTI);
-                p += SDCARD_SECTOR_SIZE;
+            for (uint32_t block = 0; (err == SDCARD_OK) && (block < count); block++) {
+                cur_lba = lba + block;
+                err = tx_block(pos, TOKEN_START_MULTI);
+                pos += SDCARD_SECTOR_SIZE;
             }
-            int s = stop_write();       /* also after an error, see stop_write() */
-            if (r == SDCARD_OK) {
-                r = s;
+            int stop_err = stop_write();       /* also after an error, see stop_write() */
+            if (err == SDCARD_OK) {
+                err = stop_err;
             }
         }
     }
     /* Wait for programming to finish so that errors show up here, and
      * check the card status: a block can be accepted and still fail. */
-    if ((r == SDCARD_OK) && !wait_ready(TMO_WRITE_MS)) {
-        r = fail(SDCARD_ERR_TIMEOUT, 0x00u);
+    if ((err == SDCARD_OK) && !wait_ready(TMO_WRITE_MS)) {
+        err = fail(SDCARD_ERR_TIMEOUT, 0x00u);
     }
-    if (r == SDCARD_OK) {
+    if (err == SDCARD_OK) {
         uint8_t r1 = sd_cmd(CMD13, 0);
         uint8_t r2 = rx_byte();
         /* A multiple-block write that ends on the last sector may set
@@ -678,31 +678,31 @@ static int write_blocks(uint32_t lba, const uint8_t *p, uint32_t count)
             r2 &= (uint8_t)~R2_OUT_OF_RANGE;
         }
         if ((r1 != 0) || (r2 != 0)) {
-            r = fail(SDCARD_ERR_WRITE, ((uint32_t)r1 << 8) | r2);
+            err = fail(SDCARD_ERR_WRITE, ((uint32_t)r1 << 8) | r2);
         }
     }
     deselect();
-    return r;
+    return err;
 }
 
 int sdcard_write(uint32_t lba, const void *buf, uint32_t count)
 {
-    int r = check_range(lba, count);
+    int err = check_range(lba, count);
 
     /* After a timeout or a CRC error, write the whole range again: writing
      * the same data twice is harmless, and the card does not tell (in SPI
      * mode, without ACMD22) which of the blocks before the error it kept. */
-    for (int tries = 1; r == SDCARD_OK; tries++) {
-        r = write_blocks(lba, (const uint8_t *)buf, count);
-        if ((r != SDCARD_ERR_TIMEOUT) && (r != SDCARD_ERR_CRC)) {
+    for (int tries = 1; err == SDCARD_OK; tries++) {
+        err = write_blocks(lba, (const uint8_t *)buf, count);
+        if ((err != SDCARD_ERR_TIMEOUT) && (err != SDCARD_ERR_CRC)) {
             break;
         }
         if (tries >= SDCARD_SPI_RETRIES) {
             break;
         }
-        r = SDCARD_OK;
+        err = SDCARD_OK;
     }
-    return r;
+    return err;
 }
 
 int sdcard_sync(void)

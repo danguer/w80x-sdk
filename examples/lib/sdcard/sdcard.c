@@ -21,18 +21,18 @@
 
 /* CRC7, polynomial x^7 + x^3 + 1, as used on commands. Returns the 7-bit
  * value; the command byte is (crc << 1) | 1. */
-uint8_t sdcard_crc7(const uint8_t *p, size_t len)
+uint8_t sdcard_crc7(const uint8_t *data, size_t len)
 {
     uint8_t crc = 0;
 
     while (len--) {
-        uint8_t d = *p++;
-        for (int i = 0; i < 8; i++) {
+        uint8_t byte = *data++;
+        for (int bit = 0; bit < 8; bit++) {
             crc <<= 1;
-            if ((d ^ crc) & 0x80u) {
+            if ((byte ^ crc) & 0x80u) {
                 crc ^= 0x09u;
             }
-            d <<= 1;
+            byte <<= 1;
         }
     }
     return crc & 0x7Fu;
@@ -42,14 +42,14 @@ uint8_t sdcard_crc7(const uint8_t *p, size_t len)
  * data blocks. Check value: "123456789" -> 0x31C3. */
 #if SDCARD_HW_CRC
 
-uint16_t sdcard_crc16(uint16_t crc, const void *p, size_t len)
+uint16_t sdcard_crc16(uint16_t crc, const void *data, size_t len)
 {
     /* Clock on and reset the engine the first time only, so a TRNG or other
      * setup the program made is left alone afterwards. */
     if (!(CLK->GATE_EN & CLK_GATE_GPSEC)) {
         crypto_init();
     }
-    return (uint16_t)crc_calc(CRC_16_CCITT, crc, p, len);
+    return (uint16_t)crc_calc(CRC_16_CCITT, crc, data, len);
 }
 
 #else
@@ -89,27 +89,27 @@ static const uint16_t crc16_tab[256] = {
     0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0,
 };
 
-uint16_t sdcard_crc16(uint16_t crc, const void *p, size_t len)
+uint16_t sdcard_crc16(uint16_t crc, const void *data, size_t len)
 {
-    const uint8_t *b = (const uint8_t *)p;
+    const uint8_t *pos = (const uint8_t *)data;
 
     while (len--) {
-        crc = (uint16_t)((crc << 8) ^ crc16_tab[((crc >> 8) ^ *b++) & 0xFFu]);
+        crc = (uint16_t)((crc << 8) ^ crc16_tab[((crc >> 8) ^ *pos++) & 0xFFu]);
     }
     return crc;
 }
 
 #endif /* SDCARD_HW_CRC */
 
-/* Bits [msb:lsb] of a 128-bit register sent MSB first (r[0] = bits 127..120). */
-static uint32_t bits(const uint8_t r[16], uint32_t msb, uint32_t lsb)
+/* Bits [msb:lsb] of a 128-bit register sent MSB first (reg[0] = bits 127..120). */
+static uint32_t bits(const uint8_t reg[16], uint32_t msb, uint32_t lsb)
 {
-    uint32_t v = 0;
+    uint32_t value = 0;
 
-    for (uint32_t i = msb + 1u; i-- > lsb; ) {
-        v = (v << 1) | ((r[15u - (i / 8u)] >> (i % 8u)) & 1u);
+    for (uint32_t bit = msb + 1u; bit-- > lsb; ) {
+        value = (value << 1) | ((reg[15u - (bit / 8u)] >> (bit % 8u)) & 1u);
     }
-    return v;
+    return value;
 }
 
 uint32_t sdcard_csd_sectors(const uint8_t csd[16], sdcard_type_t type)
@@ -120,31 +120,31 @@ uint32_t sdcard_csd_sectors(const uint8_t csd[16], sdcard_type_t type)
         return (bits(csd, 69, 48) + 1u) << 10;
     }
     if ((type != SDCARD_TYPE_MMC) && (ver == 2u)) {          /* CSD 3.0: SDUC */
-        uint64_t n = ((uint64_t)bits(csd, 75, 48) + 1u) << 10;
-        return (n > UINT32_MAX) ? UINT32_MAX : (uint32_t)n;
+        uint64_t sectors = ((uint64_t)bits(csd, 75, 48) + 1u) << 10;
+        return (sectors > UINT32_MAX) ? UINT32_MAX : (uint32_t)sectors;
     }
     /* CSD 1.0 and MMC: (C_SIZE + 1) * 2^(C_SIZE_MULT + 2) blocks of 2^READ_BL_LEN */
     uint32_t c_size = bits(csd, 73, 62);
     uint32_t mult   = bits(csd, 49, 47);
     uint32_t bl_len = bits(csd, 83, 80);
-    uint32_t sh = mult + 2u + bl_len;
-    return (sh >= 9u) ? ((c_size + 1u) << (sh - 9u)) : ((c_size + 1u) >> (9u - sh));
+    uint32_t shift  = mult + 2u + bl_len;
+    return (shift >= 9u) ? ((c_size + 1u) << (shift - 9u)) : ((c_size + 1u) >> (9u - shift));
 }
 
 uint32_t sdcard_csd_erase_sectors(const uint8_t csd[16], sdcard_type_t type)
 {
     uint32_t wbl = bits(csd, 25, 22);                       /* WRITE_BL_LEN */
-    uint32_t n;
+    uint32_t blocks;
 
     if (type == SDCARD_TYPE_MMC) {
         /* (ERASE_GRP_SIZE + 1) * (ERASE_GRP_MULT + 1) write blocks */
-        n = (bits(csd, 46, 42) + 1u) * (bits(csd, 41, 37) + 1u);
+        blocks = (bits(csd, 46, 42) + 1u) * (bits(csd, 41, 37) + 1u);
     } else if (bits(csd, 127, 126) == 0u) {
-        n = bits(csd, 45, 39) + 1u;                         /* SECTOR_SIZE + 1 */
+        blocks = bits(csd, 45, 39) + 1u;                         /* SECTOR_SIZE + 1 */
     } else {
         return 1u;
     }
-    return (wbl > 9u) ? (n << (wbl - 9u)) : n;
+    return (wbl > 9u) ? (blocks << (wbl - 9u)) : blocks;
 }
 
 void sdcard_parse_cid(const uint8_t cid[16], sdcard_type_t type, sdcard_cid_t *out)
@@ -152,8 +152,8 @@ void sdcard_parse_cid(const uint8_t cid[16], sdcard_type_t type, sdcard_cid_t *o
     out->mid = cid[0];
     if (type == SDCARD_TYPE_MMC) {
         out->oid[0] = '\0';
-        for (int i = 0; i < 5; i++) {
-            out->pnm[i] = (char)cid[3 + i];
+        for (int pos = 0; pos < 5; pos++) {
+            out->pnm[pos] = (char)cid[3 + pos];
         }
         out->prv   = cid[9];
         out->psn   = ((uint32_t)cid[10] << 24) | ((uint32_t)cid[11] << 16) |
@@ -163,8 +163,8 @@ void sdcard_parse_cid(const uint8_t cid[16], sdcard_type_t type, sdcard_cid_t *o
     } else {
         out->oid[0] = (char)cid[1];
         out->oid[1] = (char)cid[2];
-        for (int i = 0; i < 5; i++) {
-            out->pnm[i] = (char)cid[3 + i];
+        for (int pos = 0; pos < 5; pos++) {
+            out->pnm[pos] = (char)cid[3 + pos];
         }
         out->prv   = cid[8];
         out->psn   = ((uint32_t)cid[9] << 24) | ((uint32_t)cid[10] << 16) |

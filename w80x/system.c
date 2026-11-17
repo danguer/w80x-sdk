@@ -103,14 +103,14 @@ void __attribute__((noreturn, used)) w80x_start(void)
     /* Vector table copy into SRAM (VBR points there; patchable at runtime). */
     copy_words(__vectors_ram_start, __Vectors, __vectors_ram_end);
     copy_words(__data_start, __data_load, __data_end);
-    for (uint32_t *p = __bss_start; p < __bss_end; p++) {
-        *p = 0;
+    for (uint32_t *word = __bss_start; word < __bss_end; word++) {
+        *word = 0;
     }
 
     SystemInit();
 
-    for (void (**f)(void) = __init_array_start; f < __init_array_end; f++) {
-        (*f)();
+    for (void (**ctor)(void) = __init_array_start; ctor < __init_array_end; ctor++) {
+        (*ctor)();
     }
 
     main();

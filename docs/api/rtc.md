@@ -10,20 +10,20 @@
 #include <time.h>
 #include "w80x_rtc.h"
 
-rtc_init();                                  // start at 2000-01-01 if stopped, else keep the time
-struct tm t = rtc_tm(2026, 11, 16, 12, 0, 0);   // full year, month 1..12, day, h, m, s
-rtc_set_time(&t);                            // -1 if t is not a valid time (2000..2127)
-rtc_get_time(&t);                            // standard struct tm, tm_wday and tm_yday filled in
-time_t now = time(NULL);                     // newlib's time() reads the RTC (UTC)
-rtc_set_unix(now);                           // set from Unix time; also rtc_get_unix()
+rtc_init();                                       // start at 2000-01-01 if stopped, else keep the time
+struct tm date = rtc_tm(2026, 11, 16, 12, 0, 0);  // full year, month 1..12, day, h, m, s
+rtc_set_time(&date);                              // -1 if date is not a valid time (2000..2127)
+rtc_get_time(&date);                              // standard struct tm, tm_wday and tm_yday filled in
+time_t now = time(NULL);                          // newlib's time() reads the RTC (UTC)
+rtc_set_unix(now);                                // set from Unix time; also rtc_get_unix()
 
-struct tm a;
-rtc_gmtime(now + 60, &a);                    // alarm one minute later
-rtc_set_alarm(&a);
-irq_enable(PMU_IRQn);                        // PMU_IRQHandler: if (rtc_alarm_pending()) rtc_alarm_clear();
+struct tm alarm;
+rtc_gmtime(now + 60, &alarm);                     // alarm one minute later
+rtc_set_alarm(&alarm);
+irq_enable(PMU_IRQn);                             // PMU_IRQHandler: if (rtc_alarm_pending()) rtc_alarm_clear();
 __enable_irq();
 
-rtc_clock_select(RTC_CLK_XTAL);              // 40 MHz crystal / div (accurate) or RTC_CLK_RC32K
+rtc_clock_select(RTC_CLK_XTAL);                   // 40 MHz crystal / div (accurate) or RTC_CLK_RC32K
 ```
 
 Times use the standard `<time.h>` types: `struct tm` (`tm_year` = years

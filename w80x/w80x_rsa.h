@@ -64,11 +64,11 @@ W80X_INLINE void rsa_init(void)
 static inline int rsa__reset(void)
 {
     RSA->CTRL = RSA_CTRL_RESET;
-    uint32_t t = RSA_TIMEOUT;
-    while ((RSA->CTRL & RSA_CTRL_RESET) && --t) {
+    uint32_t tries = RSA_TIMEOUT;
+    while ((RSA->CTRL & RSA_CTRL_RESET) && --tries) {
     }
     RSA->CTRL = 0;                                     /* clear DONE */
-    return t ? 0 : -1;
+    return tries ? 0 : -1;
 }
 
 /* big-endian byte string (as in PKCS#1, PEM, test vectors) <-> words */
@@ -77,14 +77,16 @@ static inline void rsa_from_bytes(uint32_t *w, uint32_t words, const uint8_t *be
     for (uint32_t i = 0; i < words; i++) {
         w[i] = 0;
     }
-    for (size_t i = 0; i < len && i < 4u * words; i++)
+    for (size_t i = 0; (i < len) && (i < (4u * words)); i++) {
         w[i / 4] |= (uint32_t)be[len - 1 - i] << (8u * (i % 4));
+    }
 }
 
 static inline void rsa_to_bytes(uint8_t *be, size_t len, const uint32_t *w, uint32_t words)
 {
-    for (size_t i = 0; i < len; i++)
-        be[len - 1 - i] = i < 4u * words ? (uint8_t)(w[i / 4] >> (8u * (i % 4))) : 0;
+    for (size_t i = 0; i < len; i++) {
+        be[len - 1 - i] = (i < (4u * words)) ? (uint8_t)(w[i / 4] >> (8u * (i % 4))) : 0;
+    }
 }
 
 /* a >= b ? */
@@ -166,8 +168,8 @@ static inline int rsa__mul(uint32_t mode)
 {
     RSA->CTRL = RSA_CTRL_MODE(mode);                   /* also clears DONE */
     RSA->CTRL = RSA_CTRL_MODE(mode) | RSA_CTRL_START;
-    for (uint32_t t = RSA_TIMEOUT; !(RSA->CTRL & RSA_CTRL_DONE); ) {
-        if (--t == 0) {
+    for (uint32_t tries = RSA_TIMEOUT; !(RSA->CTRL & RSA_CTRL_DONE); ) {
+        if (--tries == 0) {
             return -1;
         }
     }

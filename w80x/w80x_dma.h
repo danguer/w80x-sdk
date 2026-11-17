@@ -100,10 +100,10 @@ W80X_INLINE void dma_start(uint32_t ch) { dma_ch(ch)->CHCTRL |= DMA_CHCTRL_ON; }
 /* Stops after the current burst; waits until the channel is off. */
 W80X_INLINE void dma_stop(uint32_t ch)
 {
-    DMA_Channel_TypeDef *c = dma_ch(ch);
-    if (c->CHCTRL & DMA_CHCTRL_ON) {
-        c->CHCTRL |= DMA_CHCTRL_OFF;
-        while (c->CHCTRL & DMA_CHCTRL_ON) {
+    DMA_Channel_TypeDef *regs = dma_ch(ch);
+    if (regs->CHCTRL & DMA_CHCTRL_ON) {
+        regs->CHCTRL |= DMA_CHCTRL_OFF;
+        while (regs->CHCTRL & DMA_CHCTRL_ON) {
         }
     }
 }
@@ -125,13 +125,13 @@ W80X_INLINE uint32_t dma_count(uint32_t ch) { return dma_ch(ch)->STATUS & 0xFFFF
 W80X_INLINE void dma_setup(uint32_t ch, volatile void *dst, const volatile void *src,
                            uint32_t len, uint32_t flags, dma_req_t req)
 {
-    DMA_Channel_TypeDef *c = dma_ch(ch);
+    DMA_Channel_TypeDef *regs = dma_ch(ch);
 
-    c->MODE = (req == DMA_REQ_MEM) ? 0u
-            : (DMA_MODE_HW | (((uint32_t)req << DMA_MODE_REQ_Pos) & DMA_MODE_REQ_Msk));
-    c->SRC  = (uint32_t)(uintptr_t)src;
-    c->DST  = (uint32_t)(uintptr_t)dst;
-    c->CTRL = (flags & DMA_FLAGS_Msk) | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos);
+    regs->MODE = (req == DMA_REQ_MEM) ? 0u
+               : (DMA_MODE_HW | (((uint32_t)req << DMA_MODE_REQ_Pos) & DMA_MODE_REQ_Msk));
+    regs->SRC  = (uint32_t)(uintptr_t)src;
+    regs->DST  = (uint32_t)(uintptr_t)dst;
+    regs->CTRL = (flags & DMA_FLAGS_Msk) | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos);
     DMA->INTS = DMA_INT_CH(ch);
 }
 
@@ -150,10 +150,10 @@ W80X_INLINE void dma_req_clear(dma_req_t req)
  * channel must be stopped). Handy for ping-pong buffers. */
 W80X_INLINE void dma_reload(uint32_t ch, volatile void *dst, const volatile void *src, uint32_t len)
 {
-    DMA_Channel_TypeDef *c = dma_ch(ch);
-    c->SRC  = (uint32_t)(uintptr_t)src;
-    c->DST  = (uint32_t)(uintptr_t)dst;
-    c->CTRL = (c->CTRL & ~DMA_CTRL_LEN_Msk) | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos);
+    DMA_Channel_TypeDef *regs = dma_ch(ch);
+    regs->SRC  = (uint32_t)(uintptr_t)src;
+    regs->DST  = (uint32_t)(uintptr_t)dst;
+    regs->CTRL = (regs->CTRL & ~DMA_CTRL_LEN_Msk) | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos);
 }
 
 /* Ring buffers for DMA_SRC_WRAP / DMA_DST_WRAP: the address runs through
@@ -162,10 +162,10 @@ W80X_INLINE void dma_reload(uint32_t ch, volatile void *dst, const volatile void
  * (Follows wm_iot_sdk; not yet tested here.) */
 W80X_INLINE void dma_set_wrap(uint32_t ch, uint32_t src_len, uint32_t dst_len)
 {
-    DMA_Channel_TypeDef *c = dma_ch(ch);
-    c->SRC_WRAP  = c->SRC;
-    c->DST_WRAP  = c->DST;
-    c->WRAP_SIZE = (src_len & 0xFFFFu) | ((dst_len & 0xFFFFu) << 16);
+    DMA_Channel_TypeDef *regs = dma_ch(ch);
+    regs->SRC_WRAP  = regs->SRC;
+    regs->DST_WRAP  = regs->DST;
+    regs->WRAP_SIZE = (src_len & 0xFFFFu) | ((dst_len & 0xFFFFu) << 16);
 }
 
 /* ---- interrupts -------------------------------------------------------- */
@@ -175,23 +175,23 @@ W80X_INLINE IRQn_Type dma_irqn(uint32_t ch)
     return (ch < 4u) ? (IRQn_Type)(DMA_CH0_IRQn + ch) : DMA_CH4_7_IRQn;
 }
 
-W80X_INLINE void dma_irq_enable(uint32_t ch, uint32_t m)
+W80X_INLINE void dma_irq_enable(uint32_t ch, uint32_t mask)
 {
-    uint32_t p = irq_save();
-    DMA->INTM &= ~((m & DMA_IRQ_ALL) << (2u * ch));
-    irq_restore(p);
+    uint32_t psr = irq_save();
+    DMA->INTM &= ~((mask & DMA_IRQ_ALL) << (2u * ch));
+    irq_restore(psr);
 }
 
-W80X_INLINE void dma_irq_disable(uint32_t ch, uint32_t m)
+W80X_INLINE void dma_irq_disable(uint32_t ch, uint32_t mask)
 {
-    uint32_t p = irq_save();
-    DMA->INTM |= (m & DMA_IRQ_ALL) << (2u * ch);
-    irq_restore(p);
+    uint32_t psr = irq_save();
+    DMA->INTM |= (mask & DMA_IRQ_ALL) << (2u * ch);
+    irq_restore(psr);
 }
 
 /* Raw flags (DMA_IRQ_BURST / DMA_IRQ_DONE), set even while masked. */
-W80X_INLINE uint32_t dma_irq_status(uint32_t ch)          { return (DMA->INTS >> (2u * ch)) & DMA_IRQ_ALL; }
-W80X_INLINE void     dma_irq_clear(uint32_t ch, uint32_t m) { DMA->INTS = (m & DMA_IRQ_ALL) << (2u * ch); }
+W80X_INLINE uint32_t dma_irq_status(uint32_t ch)               { return (DMA->INTS >> (2u * ch)) & DMA_IRQ_ALL; }
+W80X_INLINE void     dma_irq_clear(uint32_t ch, uint32_t mask) { DMA->INTS = (mask & DMA_IRQ_ALL) << (2u * ch); }
 
 /* ---- convenience ------------------------------------------------------- */
 
@@ -199,9 +199,9 @@ W80X_INLINE void     dma_irq_clear(uint32_t ch, uint32_t m) { DMA->INTS = (m & D
  * are word-aligned, bytes otherwise. */
 W80X_INLINE void dma_memcpy(uint32_t ch, void *dst, const void *src, uint32_t len)
 {
-    uint32_t w = ((uint32_t)(uintptr_t)dst | (uint32_t)(uintptr_t)src | len) & 3u;
+    uint32_t unaligned = ((uint32_t)(uintptr_t)dst | (uint32_t)(uintptr_t)src | len) & 3u;
     dma_setup(ch, dst, src, len,
-              DMA_SRC_INC | DMA_DST_INC | (w ? DMA_WIDTH_8 : (DMA_WIDTH_32 | DMA_BURST_4)),
+              DMA_SRC_INC | DMA_DST_INC | (unaligned ? DMA_WIDTH_8 : (DMA_WIDTH_32 | DMA_BURST_4)),
               DMA_REQ_MEM);
     dma_start(ch);
     dma_wait(ch);
@@ -210,37 +210,37 @@ W80X_INLINE void dma_memcpy(uint32_t ch, void *dst, const void *src, uint32_t le
 /* ---- UART -------------------------------------------------------------- */
 
 /* The UART DMA requests come from one UART at a time; this picks it. */
-W80X_INLINE void dma_uart_select(UART_TypeDef *u)
+W80X_INLINE void dma_uart_select(UART_TypeDef *uart)
 {
-    DMA->UART_SEL = (DMA->UART_SEL & ~DMA_UART_SEL_Msk) | uart_index(u);
+    DMA->UART_SEL = (DMA->UART_SEL & ~DMA_UART_SEL_Msk) | uart_index(uart);
 }
 
 /* Send len bytes from buf in the background (sequence from wm_sdk_w80x).
  * "Done" means the last byte is in the UART FIFO: uart_flush() to wait for
  * the wire. Call dma_uart_tx_end() when done to stop the UART's requests. */
-W80X_INLINE void dma_uart_tx(uint32_t ch, UART_TypeDef *u, const void *buf, uint32_t len)
+W80X_INLINE void dma_uart_tx(uint32_t ch, UART_TypeDef *uart, const void *buf, uint32_t len)
 {
-    dma_uart_select(u);
-    u->DMAC &= ~UART_DMAC_TX_EN;
-    dma_setup(ch, &u->TDW, buf, len, DMA_SRC_INC | DMA_DST_FIXED | DMA_WIDTH_8, DMA_REQ_UART_TX);
+    dma_uart_select(uart);
+    uart->DMAC &= ~UART_DMAC_TX_EN;
+    dma_setup(ch, &uart->TDW, buf, len, DMA_SRC_INC | DMA_DST_FIXED | DMA_WIDTH_8, DMA_REQ_UART_TX);
     dma_start(ch);
-    u->DMAC |= UART_DMAC_TX_EN;
+    uart->DMAC |= UART_DMAC_TX_EN;
 }
 
-W80X_INLINE void dma_uart_tx_end(UART_TypeDef *u) { u->DMAC &= ~UART_DMAC_TX_EN; }
+W80X_INLINE void dma_uart_tx_end(UART_TypeDef *uart) { uart->DMAC &= ~UART_DMAC_TX_EN; }
 
 /* Receive exactly len bytes into buf in the background; dma_count() says
  * how many have arrived so far. */
-W80X_INLINE void dma_uart_rx(uint32_t ch, UART_TypeDef *u, void *buf, uint32_t len)
+W80X_INLINE void dma_uart_rx(uint32_t ch, UART_TypeDef *uart, void *buf, uint32_t len)
 {
-    dma_uart_select(u);
-    u->DMAC &= ~UART_DMAC_RX_EN;
-    dma_setup(ch, buf, &u->RDW, len, DMA_SRC_FIXED | DMA_DST_INC | DMA_WIDTH_8, DMA_REQ_UART_RX);
+    dma_uart_select(uart);
+    uart->DMAC &= ~UART_DMAC_RX_EN;
+    dma_setup(ch, buf, &uart->RDW, len, DMA_SRC_FIXED | DMA_DST_INC | DMA_WIDTH_8, DMA_REQ_UART_RX);
     dma_start(ch);
-    u->DMAC |= UART_DMAC_RX_EN;
+    uart->DMAC |= UART_DMAC_RX_EN;
 }
 
-W80X_INLINE void dma_uart_rx_end(UART_TypeDef *u) { u->DMAC &= ~UART_DMAC_RX_EN; }
+W80X_INLINE void dma_uart_rx_end(UART_TypeDef *uart) { uart->DMAC &= ~UART_DMAC_RX_EN; }
 
 /* ---- chain mode (descriptor lists) ---------------------------------------
  * Layout and the CTRL >> 1 encoding come from wm_sdk_w80x (tls_dma_start)
@@ -258,25 +258,25 @@ typedef struct dma_desc {
 
 #define DMA_DESC_VALID  BIT(31)
 
-W80X_INLINE void dma_desc_init(dma_desc_t *d, volatile void *dst, const volatile void *src,
+W80X_INLINE void dma_desc_init(dma_desc_t *desc, volatile void *dst, const volatile void *src,
                                uint32_t len, uint32_t flags, dma_desc_t *next)
 {
-    d->ctrl  = (((flags & DMA_FLAGS_Msk) & ~DMA_CTRL_AUTO_RELOAD)
-               | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos)) >> 1;
-    d->src   = (uint32_t)(uintptr_t)src;
-    d->dst   = (uint32_t)(uintptr_t)dst;
-    d->next  = next;
-    d->valid = DMA_DESC_VALID;
+    desc->ctrl  = (((flags & DMA_FLAGS_Msk) & ~DMA_CTRL_AUTO_RELOAD)
+                  | ((len & DMA_MAX_LEN) << DMA_CTRL_LEN_Pos)) >> 1;
+    desc->src   = (uint32_t)(uintptr_t)src;
+    desc->dst   = (uint32_t)(uintptr_t)dst;
+    desc->next  = next;
+    desc->valid = DMA_DESC_VALID;
 }
 
 /* Run a descriptor list on a stopped channel; dma_start() starts it. */
 W80X_INLINE void dma_setup_chain(uint32_t ch, dma_desc_t *first, dma_req_t req)
 {
-    DMA_Channel_TypeDef *c = dma_ch(ch);
-    c->MODE = DMA_MODE_CHAIN
-            | ((req == DMA_REQ_MEM) ? 0u
-               : (DMA_MODE_HW | (((uint32_t)req << DMA_MODE_REQ_Pos) & DMA_MODE_REQ_Msk)));
-    c->DESC = (uint32_t)(uintptr_t)first;
+    DMA_Channel_TypeDef *regs = dma_ch(ch);
+    regs->MODE = DMA_MODE_CHAIN
+               | ((req == DMA_REQ_MEM) ? 0u
+                  : (DMA_MODE_HW | (((uint32_t)req << DMA_MODE_REQ_Pos) & DMA_MODE_REQ_Msk)));
+    regs->DESC = (uint32_t)(uintptr_t)first;
     DMA->INTS = DMA_INT_CH(ch);
 }
 

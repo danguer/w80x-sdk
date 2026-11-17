@@ -12,9 +12,9 @@
  * The RTC has no time zone; treat it as UTC.
  *
  *     rtc_init();                                  // starts it if stopped
- *     struct tm t = rtc_tm(2026, 11, 16, 12, 0, 0);
- *     rtc_set_time(&t);
- *     rtc_get_time(&t);                            // also fills tm_wday, tm_yday
+ *     struct tm date = rtc_tm(2026, 11, 16, 12, 0, 0);
+ *     rtc_set_time(&date);
+ *     rtc_get_time(&date);                         // also fills tm_wday, tm_yday
  *     time_t now = time(NULL);                     // newlib's time() reads the RTC
  *
  * Alarm:
@@ -24,9 +24,9 @@
  *         if (rtc_alarm_pending()) { rtc_alarm_clear(); alarm_fired = 1; }
  *     }
  *     ...
- *     struct tm a;
- *     rtc_gmtime(rtc_get_unix() + 10, &a);         // 10 s from now
- *     rtc_set_alarm(&a);
+ *     struct tm alarm;
+ *     rtc_gmtime(rtc_get_unix() + 10, &alarm);     // 10 s from now
+ *     rtc_set_alarm(&alarm);
  *     irq_enable(PMU_IRQn);
  *     __enable_irq();
  *
@@ -70,20 +70,20 @@ W80X_INLINE int rtc_days_in_month(int year, int mon)
     return days[mon] + (((mon == 1) && rtc_is_leap(year)) ? 1 : 0);
 }
 
-/* 1 if t is a date and time the RTC can hold (tm_wday, tm_yday and tm_isdst
+/* 1 if tm is a date and time the RTC can hold (tm_wday, tm_yday and tm_isdst
  * are ignored). */
-W80X_INLINE int rtc_valid(const struct tm *t)
+W80X_INLINE int rtc_valid(const struct tm *tm)
 {
-    int year = t->tm_year + 1900;
+    int year = tm->tm_year + 1900;
 
     return (year >= RTC_YEAR_MIN) && (year <= RTC_YEAR_MAX) &&
-           (t->tm_mday >= 1) && (t->tm_mday <= rtc_days_in_month(year, t->tm_mon)) &&
-           (t->tm_hour >= 0) && (t->tm_hour < 24) && (t->tm_min >= 0) && (t->tm_min < 60) &&
-           (t->tm_sec >= 0) && (t->tm_sec < 60);
+           (tm->tm_mday >= 1) && (tm->tm_mday <= rtc_days_in_month(year, tm->tm_mon)) &&
+           (tm->tm_hour >= 0) && (tm->tm_hour < 24) && (tm->tm_min >= 0) && (tm->tm_min < 60) &&
+           (tm->tm_sec >= 0) && (tm->tm_sec < 60);
 }
 
 /* Days since 1970-01-01 for a full year, month 1..12 and day (Howard
- * Hinnant's days_from_civil, years >= 1970). */
+ * Hinnant's days_from_civil, years >= 1970; the short names are his). */
 W80X_INLINE uint32_t rtc__days(uint32_t y, uint32_t m, uint32_t d)
 {
     y -= (m <= 2u) ? 1u : 0u;
@@ -93,77 +93,77 @@ W80X_INLINE uint32_t rtc__days(uint32_t y, uint32_t m, uint32_t d)
     return (era * 146097u) + doe - 719468u;
 }
 
-/* Set tm_wday, tm_yday and tm_isdst (0) from the date in t. */
-W80X_INLINE void rtc__fill(struct tm *t)
+/* Set tm_wday, tm_yday and tm_isdst (0) from the date in tm. */
+W80X_INLINE void rtc__fill(struct tm *tm)
 {
-    uint32_t y = (uint32_t)(t->tm_year + 1900);
-    uint32_t days = rtc__days(y, (uint32_t)t->tm_mon + 1u, (uint32_t)t->tm_mday);
+    uint32_t year = (uint32_t)(tm->tm_year + 1900);
+    uint32_t days = rtc__days(year, (uint32_t)tm->tm_mon + 1u, (uint32_t)tm->tm_mday);
 
-    t->tm_wday  = (int)((days + 4u) % 7u);          /* 1970-01-01 was a Thursday */
-    t->tm_yday  = (int)(days - rtc__days(y, 1u, 1u));
-    t->tm_isdst = 0;
+    tm->tm_wday  = (int)((days + 4u) % 7u);          /* 1970-01-01 was a Thursday */
+    tm->tm_yday  = (int)(days - rtc__days(year, 1u, 1u));
+    tm->tm_isdst = 0;
 }
 
 /* A struct tm from human values: full year, month 1..12, day 1..31. tm_wday
  * and tm_yday are filled in. The values are not checked (see rtc_valid()). */
 W80X_INLINE struct tm rtc_tm(int year, int month, int day, int hour, int min, int sec)
 {
-    struct tm t = { 0 };
+    struct tm tm = { 0 };
 
-    t.tm_year = year - 1900;
-    t.tm_mon  = month - 1;
-    t.tm_mday = day;
-    t.tm_hour = hour;
-    t.tm_min  = min;
-    t.tm_sec  = sec;
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min  = min;
+    tm.tm_sec  = sec;
     if ((year >= 1970) && (month >= 1) && (month <= 12) && (day >= 1)) {
-        rtc__fill(&t);
+        rtc__fill(&tm);
     }
-    return t;
+    return tm;
 }
 
 /* struct tm (UTC) to Unix time, like BSD timegm(): only the date and time
  * fields are used, and they must be in range (years >= 1970). */
-W80X_INLINE time_t rtc_timegm(const struct tm *t)
+W80X_INLINE time_t rtc_timegm(const struct tm *tm)
 {
-    uint32_t days = rtc__days((uint32_t)(t->tm_year + 1900), (uint32_t)t->tm_mon + 1u,
-                              (uint32_t)t->tm_mday);
+    uint32_t days = rtc__days((uint32_t)(tm->tm_year + 1900), (uint32_t)tm->tm_mon + 1u,
+                              (uint32_t)tm->tm_mday);
 
-    return ((time_t)days * 86400) + (t->tm_hour * 3600) + (t->tm_min * 60) + t->tm_sec;
+    return ((time_t)days * 86400) + (tm->tm_hour * 3600) + (tm->tm_min * 60) + tm->tm_sec;
 }
 
-/* Unix time to struct tm (UTC), like gmtime_r(), for s >= 0. */
-W80X_INLINE void rtc_gmtime(time_t s, struct tm *t)
+/* Unix time to struct tm (UTC), like gmtime_r(), for unix_time >= 0. */
+W80X_INLINE void rtc_gmtime(time_t unix_time, struct tm *tm)
 {
-    uint32_t z   = (uint32_t)(s / 86400) + 719468u;
-    uint32_t rem = (uint32_t)(s % 86400);
+    uint32_t z   = (uint32_t)(unix_time / 86400) + 719468u;
+    uint32_t rem = (uint32_t)(unix_time % 86400);
     uint32_t era = z / 146097u, doe = z - (era * 146097u);
     uint32_t yoe = (doe - (doe / 1460u) + (doe / 36524u) - (doe / 146096u)) / 365u;
     uint32_t doy = doe - ((365u * yoe) + (yoe / 4u) - (yoe / 100u));
     uint32_t mp  = ((5u * doy) + 2u) / 153u;
     uint32_t m   = (mp < 10u) ? (mp + 3u) : (mp - 9u);
 
-    t->tm_year = (int)(yoe + (era * 400u) + ((m <= 2u) ? 1u : 0u)) - 1900;
-    t->tm_mon  = (int)m - 1;
-    t->tm_mday = (int)(doy - (((153u * mp) + 2u) / 5u) + 1u);
-    t->tm_hour = (int)(rem / 3600u);
-    t->tm_min  = (int)((rem / 60u) % 60u);
-    t->tm_sec  = (int)(rem % 60u);
-    rtc__fill(t);
+    tm->tm_year = (int)(yoe + (era * 400u) + ((m <= 2u) ? 1u : 0u)) - 1900;
+    tm->tm_mon  = (int)m - 1;
+    tm->tm_mday = (int)(doy - (((153u * mp) + 2u) / 5u) + 1u);
+    tm->tm_hour = (int)(rem / 3600u);
+    tm->tm_min  = (int)((rem / 60u) % 60u);
+    tm->tm_sec  = (int)(rem % 60u);
+    rtc__fill(tm);
 }
 
 /* ---- hardware ----------------------------------------------------------- */
 
-W80X_INLINE uint32_t rtc__r1(const struct tm *t)
+W80X_INLINE uint32_t rtc__r1(const struct tm *tm)
 {
-    return ((uint32_t)t->tm_sec << RTC_R1_SEC_Pos) | ((uint32_t)t->tm_min << RTC_R1_MIN_Pos) |
-           ((uint32_t)t->tm_hour << RTC_R1_HOUR_Pos) | ((uint32_t)t->tm_mday << RTC_R1_DAY_Pos);
+    return ((uint32_t)tm->tm_sec << RTC_R1_SEC_Pos) | ((uint32_t)tm->tm_min << RTC_R1_MIN_Pos) |
+           ((uint32_t)tm->tm_hour << RTC_R1_HOUR_Pos) | ((uint32_t)tm->tm_mday << RTC_R1_DAY_Pos);
 }
 
-W80X_INLINE uint32_t rtc__r2(const struct tm *t)
+W80X_INLINE uint32_t rtc__r2(const struct tm *tm)
 {
-    return ((uint32_t)(t->tm_mon + 1) << RTC_R2_MON_Pos) |
-           ((uint32_t)(t->tm_year + 1900 - RTC_YEAR_MIN) << RTC_R2_YEAR_Pos);
+    return ((uint32_t)(tm->tm_mon + 1) << RTC_R2_MON_Pos) |
+           ((uint32_t)(tm->tm_year + 1900 - RTC_YEAR_MIN) << RTC_R2_YEAR_Pos);
 }
 
 W80X_INLINE int rtc_is_running(void) { return (PMU->RTC_R2 & RTC_R2_EN) != 0; }
@@ -171,7 +171,7 @@ W80X_INLINE int rtc_is_running(void) { return (PMU->RTC_R2 & RTC_R2_EN) != 0; }
 /* Read the current time, with tm_wday and tm_yday. R1 is read before and
  * after R2, so a carry from 23:59:59 into the next month or year can't give
  * a mixed reading. */
-W80X_INLINE void rtc_get_time(struct tm *t)
+W80X_INLINE void rtc_get_time(struct tm *tm)
 {
     uint32_t r1, r2;
 
@@ -180,31 +180,31 @@ W80X_INLINE void rtc_get_time(struct tm *t)
         r2 = PMU->RTC_R2;
     } while (((r1 ^ PMU->RTC_R1) & ~RTC_R1_ALARM_EN) != 0u);
 
-    t->tm_sec  = (int)((r1 & RTC_R1_SEC_Msk) >> RTC_R1_SEC_Pos);
-    t->tm_min  = (int)((r1 & RTC_R1_MIN_Msk) >> RTC_R1_MIN_Pos);
-    t->tm_hour = (int)((r1 & RTC_R1_HOUR_Msk) >> RTC_R1_HOUR_Pos);
-    t->tm_mday = (int)((r1 & RTC_R1_DAY_Msk) >> RTC_R1_DAY_Pos);
-    t->tm_mon  = (int)((r2 & RTC_R2_MON_Msk) >> RTC_R2_MON_Pos) - 1;
-    t->tm_year = (int)((r2 & RTC_R2_YEAR_Msk) >> RTC_R2_YEAR_Pos) + RTC_YEAR_MIN - 1900;
-    if (rtc_valid(t)) {
-        rtc__fill(t);
+    tm->tm_sec  = (int)((r1 & RTC_R1_SEC_Msk) >> RTC_R1_SEC_Pos);
+    tm->tm_min  = (int)((r1 & RTC_R1_MIN_Msk) >> RTC_R1_MIN_Pos);
+    tm->tm_hour = (int)((r1 & RTC_R1_HOUR_Msk) >> RTC_R1_HOUR_Pos);
+    tm->tm_mday = (int)((r1 & RTC_R1_DAY_Msk) >> RTC_R1_DAY_Pos);
+    tm->tm_mon  = (int)((r2 & RTC_R2_MON_Msk) >> RTC_R2_MON_Pos) - 1;
+    tm->tm_year = (int)((r2 & RTC_R2_YEAR_Msk) >> RTC_R2_YEAR_Pos) + RTC_YEAR_MIN - 1900;
+    if (rtc_valid(tm)) {
+        rtc__fill(tm);
     } else {
-        t->tm_wday  = -1;                   /* registers hold no valid date */
-        t->tm_yday  = -1;
-        t->tm_isdst = 0;
+        tm->tm_wday  = -1;                   /* registers hold no valid date */
+        tm->tm_yday  = -1;
+        tm->tm_isdst = 0;
     }
 }
 
 /* Current time as Unix time (UTC). */
 W80X_INLINE time_t rtc_get_unix(void)
 {
-    struct tm t;
+    struct tm tm;
 
-    rtc_get_time(&t);
-    return rtc_timegm(&t);
+    rtc_get_time(&tm);
+    return rtc_timegm(&tm);
 }
 
-/* Set the time and start counting. Returns 0, or -1 if t is not valid.
+/* Set the time and start counting. Returns 0, or -1 if tm is not valid.
  * tm_wday, tm_yday and tm_isdst are ignored. This also turns the alarm off
  * (the alarm enable is in the same register).
  *
@@ -212,29 +212,29 @@ W80X_INLINE time_t rtc_get_unix(void)
  * set in a second write: a single write of year/month together with the
  * enable starts the counter but leaves year and month at 0 (seen on a W801;
  * wm_iot_sdk also writes them in separate steps). */
-W80X_INLINE int rtc_set_time(const struct tm *t)
+W80X_INLINE int rtc_set_time(const struct tm *tm)
 {
-    if (!rtc_valid(t)) {
+    if (!rtc_valid(tm)) {
         return -1;
     }
     PMU->RTC_R2 = PMU->RTC_R2 & ~RTC_R2_EN; /* stop counting */
-    PMU->RTC_R1 = rtc__r1(t);
-    PMU->RTC_R2 = rtc__r2(t);               /* year and month, still stopped */
-    PMU->RTC_R2 = rtc__r2(t) | RTC_R2_EN;   /* start */
+    PMU->RTC_R1 = rtc__r1(tm);
+    PMU->RTC_R2 = rtc__r2(tm);              /* year and month, still stopped */
+    PMU->RTC_R2 = rtc__r2(tm) | RTC_R2_EN;  /* start */
     return 0;
 }
 
 /* Set the time from Unix time (UTC). Returns 0, or -1 if it is outside
  * 2000..2127. */
-W80X_INLINE int rtc_set_unix(time_t s)
+W80X_INLINE int rtc_set_unix(time_t unix_time)
 {
-    struct tm t;
+    struct tm tm;
 
-    if (s < 0) {
+    if (unix_time < 0) {
         return -1;
     }
-    rtc_gmtime(s, &t);
-    return rtc_set_time(&t);
+    rtc_gmtime(unix_time, &tm);
+    return rtc_set_time(&tm);
 }
 
 /* Start the RTC if it is stopped (power-on), at 2000-01-01 00:00:00. Keeps
@@ -253,22 +253,22 @@ W80X_INLINE int rtc_init(void)
 /* ---- alarm -------------------------------------------------------------- */
 
 /* Set the alarm: PMU_INT_RTC is set (and PMU_IRQn raised, if enabled) when
- * the RTC reaches t. Writes both registers as whole words, R1 first, the way
+ * the RTC reaches tm. Writes both registers as whole words, R1 first, the way
  * wm_iot_sdk does (its notes say the alarm must be written by word). Leaves
- * the current time alone. Returns 0, or -1 if t is not valid (tm_wday,
+ * the current time alone. Returns 0, or -1 if tm is not valid (tm_wday,
  * tm_yday and tm_isdst are ignored).
  *
  * The hardware compares for equality: an alarm time that has already passed
  * never fires. The enable stays set after the alarm fires (R1 bit 31 reads
  * 1) until rtc_alarm_off() or rtc_set_time(). */
-W80X_INLINE int rtc_set_alarm(const struct tm *t)
+W80X_INLINE int rtc_set_alarm(const struct tm *tm)
 {
-    if (!rtc_valid(t)) {
+    if (!rtc_valid(tm)) {
         return -1;
     }
     PMU->INT_SRC = PMU_INT_RTC;             /* drop an old alarm */
-    PMU->RTC_R1  = rtc__r1(t) | RTC_R1_ALARM_EN;
-    PMU->RTC_R2  = rtc__r2(t) | RTC_R2_EN;
+    PMU->RTC_R1  = rtc__r1(tm) | RTC_R1_ALARM_EN;
+    PMU->RTC_R2  = rtc__r2(tm) | RTC_R2_EN;
     return 0;
 }
 

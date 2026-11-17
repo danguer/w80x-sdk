@@ -65,40 +65,41 @@ static uint32_t cyc_ms(void)
 }
 
 /* Wait until the seconds change (or timeout_ms passes). Returns 0 on timeout. */
-static int wait_tick(struct tm *t, uint32_t timeout_ms)
+static int wait_tick(struct tm *out, uint32_t timeout_ms)
 {
-    struct tm a, b;
+    struct tm start, now;
 
-    rtc_get_time(&a);
+    rtc_get_time(&start);
     cyc_start();
     do {
-        rtc_get_time(&b);
-        if (b.tm_sec != a.tm_sec) {
-            *t = b;
+        rtc_get_time(&now);
+        if (now.tm_sec != start.tm_sec) {
+            *out = now;
             return 1;
         }
     } while (cyc_ms() < timeout_ms);
-    *t = b;
+    *out = now;
     return 0;
 }
 
 /* ---- printing and checks ----------------------------------------------- */
 
-static void fmt_time(char *buf, size_t n, const struct tm *t)
+static void fmt_time(char *buf, size_t size, const struct tm *tm)
 {
-    static const char *wd[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    static const char *weekdays[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
-    snprintf(buf, n, "%04d-%02d-%02d %02d:%02d:%02d %s", t->tm_year + 1900, t->tm_mon + 1,
-             t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec,
-             ((t->tm_wday >= 0) && (t->tm_wday < 7)) ? wd[t->tm_wday] : "?");
+    snprintf(buf, size, "%04d-%02d-%02d %02d:%02d:%02d %s", tm->tm_year + 1900, tm->tm_mon + 1,
+             tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec,
+             ((tm->tm_wday >= 0) && (tm->tm_wday < 7)) ? weekdays[tm->tm_wday] : "?");
 }
 
 /* Same date and time, and the same weekday and day of the year. */
-static int same(const struct tm *a, const struct tm *b)
+static int same(const struct tm *lhs, const struct tm *rhs)
 {
-    return (a->tm_year == b->tm_year) && (a->tm_mon == b->tm_mon) && (a->tm_mday == b->tm_mday) &&
-           (a->tm_hour == b->tm_hour) && (a->tm_min == b->tm_min) && (a->tm_sec == b->tm_sec) &&
-           (a->tm_wday == b->tm_wday) && (a->tm_yday == b->tm_yday);
+    return (lhs->tm_year == rhs->tm_year) && (lhs->tm_mon == rhs->tm_mon) &&
+           (lhs->tm_mday == rhs->tm_mday) && (lhs->tm_hour == rhs->tm_hour) &&
+           (lhs->tm_min == rhs->tm_min) && (lhs->tm_sec == rhs->tm_sec) &&
+           (lhs->tm_wday == rhs->tm_wday) && (lhs->tm_yday == rhs->tm_yday);
 }
 
 static void check(int ok, const char *what)
@@ -121,56 +122,56 @@ static void print_regs(const char *when)
 /* Set `from`, wait for the next tick and compare with `to`. */
 static void rollover(struct tm from, struct tm to, const char *what)
 {
-    struct tm t;
+    struct tm now;
     char got[40], want[40], line[120];
 
     rtc_set_time(&from);
-    int ticked = wait_tick(&t, 2500);
-    fmt_time(got, sizeof got, &t);
+    int ticked = wait_tick(&now, 2500);
+    fmt_time(got, sizeof got, &now);
     fmt_time(want, sizeof want, &to);
     snprintf(line, sizeof line, "%-28s -> %s%s%s", what, got,
-             same(&t, &to) ? "" : "  (expected ", same(&t, &to) ? "" : want);
-    if (!same(&t, &to)) {
+             same(&now, &to) ? "" : "  (expected ", same(&now, &to) ? "" : want);
+    if (!same(&now, &to)) {
         snprintf(line + strlen(line), sizeof line - strlen(line), ")%s", ticked ? "" : " no tick");
     }
-    check(ticked && same(&t, &to), line);
+    check(ticked && same(&now, &to), line);
 }
 
 /* rtc_timegm() / rtc_gmtime() against newlib's gmtime_r(), every 7 h 13 min
  * 17 s from 2000 to the end of 2127 (about 156,000 times). */
 static void check_conversions(void)
 {
-    struct tm a, b;
-    unsigned bad = 0, n = 0;
+    struct tm ours, newlib;
+    unsigned bad = 0, count = 0;
     time_t end = rtc_timegm(&(struct tm){ .tm_year = 228, .tm_mon = 0, .tm_mday = 1 });
 
-    for (time_t s = rtc_timegm(&(struct tm){ .tm_year = 100, .tm_mon = 0, .tm_mday = 1 });
-         s < end; s += (7 * 3600) + (13 * 60) + 17) {
-        rtc_gmtime(s, &a);
-        gmtime_r(&s, &b);
-        if (!same(&a, &b) || (rtc_timegm(&a) != s)) {
+    for (time_t secs = rtc_timegm(&(struct tm){ .tm_year = 100, .tm_mon = 0, .tm_mday = 1 });
+         secs < end; secs += (7 * 3600) + (13 * 60) + 17) {
+        rtc_gmtime(secs, &ours);
+        gmtime_r(&secs, &newlib);
+        if (!same(&ours, &newlib) || (rtc_timegm(&ours) != secs)) {
             bad++;
         }
-        n++;
+        count++;
     }
-    printf("  rtc_gmtime/rtc_timegm vs gmtime_r: %u times, %u different\n", n, bad);
-    check((bad == 0u) && (n > 100000u), "rtc_gmtime() and rtc_timegm() agree with newlib");
+    printf("  rtc_gmtime/rtc_timegm vs gmtime_r: %u times, %u different\n", count, bad);
+    check((bad == 0u) && (count > 100000u), "rtc_gmtime() and rtc_timegm() agree with newlib");
 }
 
 /* Measure the RTC second against the CPU clock (from the 40 MHz crystal). */
 static void measure(const char *name, unsigned secs)
 {
-    struct tm t;
+    struct tm last;
 
-    wait_tick(&t, 2500);                /* align to a second edge */
+    wait_tick(&last, 2500);                /* align to a second edge */
     cyc_start();
-    for (unsigned i = 0; i < secs; i++) {
+    for (unsigned sec = 0; sec < secs; sec++) {
         uint64_t base = cyc_now();
         do {
-            struct tm u;
-            rtc_get_time(&u);
-            if (u.tm_sec != t.tm_sec) {
-                t = u;
+            struct tm now;
+            rtc_get_time(&now);
+            if (now.tm_sec != last.tm_sec) {
+                last = now;
                 break;
             }
         } while ((cyc_now() - base) < (uint64_t)SystemCoreClock * 2u);
@@ -186,8 +187,8 @@ static void measure(const char *name, unsigned secs)
 
 static void tests(void)
 {
-    struct tm t, u;
-    char s[40];
+    struct tm now, after;
+    char text[40];
 
     passed = 0;
     failed = 0;
@@ -196,11 +197,12 @@ static void tests(void)
     /* set and read back */
     struct tm t0 = rtc_tm(2026, 11, 16, 12, 0, 9);
     rtc_set_time(&t0);
-    rtc_get_time(&t);
-    check(same(&t, &t0) && rtc_is_running(), "set 2026-11-16 12:00:09 and read it back");
+    rtc_get_time(&now);
+    check(same(&now, &t0) && rtc_is_running(), "set 2026-11-16 12:00:09 and read it back");
     print_regs("after set");
-    time_t now = time(NULL);
-    check((now == rtc_get_unix()) && (now == rtc_timegm(&t0)), "time() returns the RTC time");
+    time_t unix_now = time(NULL);
+    check((unix_now == rtc_get_unix()) && (unix_now == rtc_timegm(&t0)),
+          "time() returns the RTC time");
     check(rtc_set_time(&(struct tm){ .tm_year = 99, .tm_mon = 11, .tm_mday = 31 }) != 0,
           "rtc_set_time() rejects 1999");
     check_conversions();
@@ -222,33 +224,34 @@ static void tests(void)
 
     /* last second of the range: informational */
     rtc_set_time(&(struct tm){ .tm_year = 227, .tm_mon = 11, .tm_mday = 31, .tm_hour = 23, .tm_min = 59, .tm_sec = 59 });
-    wait_tick(&t, 2500);
-    fmt_time(s, sizeof s, &t);
-    printf("  [info] 2127-12-31 23:59:59 (last year) -> %s (R2=0x%08lx)\n", s, (unsigned long)PMU->RTC_R2);
+    wait_tick(&now, 2500);
+    fmt_time(text, sizeof text, &now);
+    printf("  [info] 2127-12-31 23:59:59 (last year) -> %s (R2=0x%08lx)\n", text,
+           (unsigned long)PMU->RTC_R2);
 
     /* alarm */
     printf("Alarm:\n");
     struct tm noon = rtc_tm(2026, 11, 16, 12, 0, 0);
     rtc_set_time(&noon);
-    wait_tick(&t, 2500);                       /* now 12:00:01, just after the tick */
-    struct tm al;
-    rtc_gmtime(rtc_timegm(&t) + 3, &al);
+    wait_tick(&now, 2500);                       /* now 12:00:01, just after the tick */
+    struct tm alarm;
+    rtc_gmtime(rtc_timegm(&now) + 3, &alarm);
     alarm_irqs = 0;
     alarm_int_src = 0;
     rtc_alarm_clear();
     irq_enable(PMU_IRQn);
-    rtc_set_alarm(&al);
-    rtc_get_time(&u);
-    check(same(&u, &t), "setting the alarm leaves the time alone");
+    rtc_set_alarm(&alarm);
+    rtc_get_time(&after);
+    check(same(&after, &now), "setting the alarm leaves the time alone");
     check(rtc_alarm_enabled(), "RTC_R1 bit 31 reads back 1 (alarm enabled)");
     print_regs("alarm set");
     cyc_start();
     while ((alarm_irqs == 0u) && (cyc_ms() < 5000u)) {
     }
     uint32_t ms = cyc_ms();
-    rtc_get_time(&u);
-    fmt_time(s, sizeof s, &u);
-    printf("  alarm IRQ after %lu ms at %s, INT_SRC=0x%08lx\n", (unsigned long)ms, s,
+    rtc_get_time(&after);
+    fmt_time(text, sizeof text, &after);
+    printf("  alarm IRQ after %lu ms at %s, INT_SRC=0x%08lx\n", (unsigned long)ms, text,
            (unsigned long)alarm_int_src);
     check((alarm_irqs != 0u) && (ms >= 2000u) && (ms <= 3500u), "alarm 3 s ahead fires after 2..3.5 s");
     check(alarm_int_src & BIT(4), "RTC flag is INT_SRC bit 4 (manual: bit 5)");
@@ -256,10 +259,10 @@ static void tests(void)
     rtc_alarm_off();
 
     /* alarm in the past: does it fire at once (>= compare) or never (== compare)? */
-    rtc_get_time(&t);
-    rtc_gmtime(rtc_timegm(&t) - 60, &al);   /* a minute ago */
+    rtc_get_time(&now);
+    rtc_gmtime(rtc_timegm(&now) - 60, &alarm);   /* a minute ago */
     alarm_irqs = 0;
-    rtc_set_alarm(&al);
+    rtc_set_alarm(&alarm);
     cyc_start();
     while ((alarm_irqs == 0u) && (cyc_ms() < 2000u)) {
     }
@@ -268,12 +271,12 @@ static void tests(void)
     rtc_alarm_off();
 
     /* alarm off */
-    rtc_get_time(&t);
-    rtc_gmtime(rtc_timegm(&t) + 2, &al);
-    rtc_set_alarm(&al);
+    rtc_get_time(&now);
+    rtc_gmtime(rtc_timegm(&now) + 2, &alarm);
+    rtc_set_alarm(&alarm);
     rtc_alarm_off();
-    rtc_get_time(&u);
-    check(!rtc_alarm_enabled() && ((rtc_timegm(&u) - rtc_timegm(&t)) <= 1),
+    rtc_get_time(&after);
+    check(!rtc_alarm_enabled() && ((rtc_timegm(&after) - rtc_timegm(&now)) <= 1),
           "rtc_alarm_off() turns it off and keeps the time");
     alarm_irqs = 0;
     cyc_start();
@@ -300,29 +303,29 @@ static void tests(void)
 static void set_from_console(void)
 {
     char line[32];
-    unsigned n = 0;
-    unsigned y, mo, d, h, mi, se;
+    unsigned len = 0;
+    unsigned year, month, day, hour, min, sec;
 
     printf("time (YYYY-MM-DD HH:MM:SS): ");
     for (;;) {
-        int c = uart_getc(UART0);
-        if ((c == '\r') || (c == '\n')) {
+        int ch = uart_getc(UART0);
+        if ((ch == '\r') || (ch == '\n')) {
             break;
         }
-        if (((c == 8) || (c == 127)) && (n > 0u)) {
-            n--;
+        if (((ch == 8) || (ch == 127)) && (len > 0u)) {
+            len--;
             printf("\b \b");
-        } else if ((c >= ' ') && (n < (sizeof line - 1u))) {
-            line[n++] = (char)c;
-            putchar(c);
+        } else if ((ch >= ' ') && (len < (sizeof line - 1u))) {
+            line[len++] = (char)ch;
+            putchar(ch);
         }
         fflush(stdout);
     }
-    line[n] = 0;
+    line[len] = 0;
     printf("\n");
-    if (sscanf(line, "%u-%u-%u %u:%u:%u", &y, &mo, &d, &h, &mi, &se) == 6) {
-        struct tm t = rtc_tm((int)y, (int)mo, (int)d, (int)h, (int)mi, (int)se);
-        printf("%s\n", (rtc_set_time(&t) == 0) ? "set" : "not a valid time (2000..2127)");
+    if (sscanf(line, "%u-%u-%u %u:%u:%u", &year, &month, &day, &hour, &min, &sec) == 6) {
+        struct tm tm = rtc_tm((int)year, (int)month, (int)day, (int)hour, (int)min, (int)sec);
+        printf("%s\n", (rtc_set_time(&tm) == 0) ? "set" : "not a valid time (2000..2127)");
     } else {
         printf("format: 2026-11-16 12:00:00\n");
     }
@@ -335,13 +338,13 @@ int main(void)
     __enable_irq();                     /* PMU_IRQn is enabled in the VIC by the alarm tests */
 
     printf("\n\nrtc on the %s\n", BOARD_NAME);
-    struct tm t;
-    char s[40];
+    struct tm now;
+    char text[40];
     int was_running = rtc_is_running();
-    rtc_get_time(&t);
-    fmt_time(s, sizeof s, &t);
+    rtc_get_time(&now);
+    fmt_time(text, sizeof text, &now);
     printf("At boot: RTC %s, time %s, clock %s, reset status 0x%lx\n",
-           was_running ? "running" : "stopped", s,
+           was_running ? "running" : "stopped", text,
            (rtc_clock_source() == RTC_CLK_XTAL) ? "crystal" : "RC 32K",
            (unsigned long)reset_status());
     print_regs("at boot");
@@ -360,11 +363,11 @@ int main(void)
     irq_enable(PMU_IRQn);
     int last = -1;
     for (;;) {
-        rtc_get_time(&t);
-        if (t.tm_sec != last) {
-            last = t.tm_sec;
-            fmt_time(s, sizeof s, &t);
-            printf("%s  %s%s\n", s, (rtc_clock_source() == RTC_CLK_XTAL) ? "xtal" : "rc32k",
+        rtc_get_time(&now);
+        if (now.tm_sec != last) {
+            last = now.tm_sec;
+            fmt_time(text, sizeof text, &now);
+            printf("%s  %s%s\n", text, (rtc_clock_source() == RTC_CLK_XTAL) ? "xtal" : "rc32k",
                    rtc_alarm_enabled() ? "  alarm on" : "");
         }
         if (alarm_irqs != 0u) {
@@ -372,25 +375,25 @@ int main(void)
             rtc_alarm_off();
             printf("*** ALARM ***\n");
         }
-        int c = uart_try_getc(UART0);
-        if (c == 's') {
+        int key = uart_try_getc(UART0);
+        if (key == 's') {
             set_from_console();
-        } else if (c == 'a') {
-            rtc_get_time(&t);
-            rtc_gmtime(rtc_get_unix() + 5, &t);
-            rtc_set_alarm(&t);
-            fmt_time(s, sizeof s, &t);
-            printf("alarm at %s\n", s);
-        } else if (c == 'c') {
+        } else if (key == 'a') {
+            struct tm alarm;
+            rtc_gmtime(rtc_get_unix() + 5, &alarm);
+            rtc_set_alarm(&alarm);
+            fmt_time(text, sizeof text, &alarm);
+            printf("alarm at %s\n", text);
+        } else if (key == 'c') {
             rtc_clock_select((rtc_clock_source() == RTC_CLK_XTAL) ? RTC_CLK_RC32K : RTC_CLK_XTAL);
-        } else if (c == 'k') {
+        } else if (key == 'k') {
             rtc_calibrate_rc32k();
             printf("RC 32K calibrated\n");
-        } else if (c == 'w') {
+        } else if (key == 'w') {
             printf("watchdog reset...\n");
             uart_flush(UART0);
             wdg_system_reset();
-        } else if (c == 't') {
+        } else if (key == 't') {
             irq_disable(PMU_IRQn);
             tests();
             irq_enable(PMU_IRQn);
