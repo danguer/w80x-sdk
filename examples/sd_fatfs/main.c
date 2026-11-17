@@ -1,7 +1,8 @@
 /*
  * sd_fatfs - FatFs on an SD card over SPI: card info, raw read speed,
  * directory listing, file write/read/verify with throughput, long file
- * names, rename/delete, and a boot counter kept in a file.
+ * names, rename/delete, file timestamps from the RTC, and a boot counter
+ * kept in a file. The RTC is set to the build time at power-on.
  *
  * Board: HLK-W801-KIT-V1.1. Output on UART0, 115200 baud (`make monitor`).
  *
@@ -31,6 +32,7 @@
 #include "w80x_uart.h"
 #include "w80x_timer.h"
 #include "w80x_utils.h"
+#include "w80x_rtc.h"
 #include "boards/hlk_w801_kit.h"
 #include "sdcard.h"
 #include "ff.h"
@@ -332,6 +334,42 @@ static void list_root(void)
     check_fr("list /", r);
 }
 
+/* ---- RTC ---------------------------------------------------------------- */
+
+static void fmt_time(char *s, size_t n, const struct tm *t)
+{
+    snprintf(s, n, "%04d-%02d-%02d %02d:%02d:%02d", t->tm_year + 1900, t->tm_mon + 1,
+             t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+}
+
+/* Start the RTC at the build time (__DATE__ "Nov 16 2026", __TIME__
+ * "12:34:56") unless it is already running, e.g. after a watchdog reset. */
+static void rtc_start(void)
+{
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    const char *d = __DATE__, *tm = __TIME__;
+    char s[24];
+    int kept = rtc_is_running();
+
+    if (!kept) {
+        int mon = 0;
+        while ((mon < 12) && (strncmp(&months[mon * 3], d, 3) != 0)) {
+            mon++;
+        }
+        struct tm t = rtc_tm(((d[7] - '0') * 1000) + ((d[8] - '0') * 100) + ((d[9] - '0') * 10) + (d[10] - '0'),
+                             mon + 1, ((d[4] == ' ') ? 0 : ((d[4] - '0') * 10)) + (d[5] - '0'),
+                             ((tm[0] - '0') * 10) + (tm[1] - '0'), ((tm[3] - '0') * 10) + (tm[4] - '0'),
+                             ((tm[6] - '0') * 10) + (tm[7] - '0'));
+        if (rtc_set_time(&t) != 0) {
+            rtc_init();
+        }
+    }
+    struct tm now;
+    rtc_get_time(&now);
+    fmt_time(s, sizeof s, &now);
+    printf("RTC: %s (%s)\n", s, kept ? "kept through the reset" : "set to the build time");
+}
+
 /* Write DATA_SIZE bytes, read them back, check, seek, delete. */
 static void file_test(void)
 {
@@ -366,6 +404,15 @@ static void file_test(void)
     FILINFO fno;
     r = f_stat(DATA_FILE, &fno);
     check_ok("f_stat size", (r == FR_OK) && (fno.fsize == DATA_SIZE));
+
+    /* timestamp written at f_close(), from get_fattime() (2 s resolution) */
+    struct tm stamp = rtc_tm(1980 + (fno.fdate >> 9), (fno.fdate >> 5) & 15u, fno.fdate & 31u,
+                             fno.ftime >> 11, (fno.ftime >> 5) & 63u, (fno.ftime & 31u) * 2u);
+    char s[24];
+    fmt_time(s, sizeof s, &stamp);
+    time_t age = rtc_get_unix() - rtc_timegm(&stamp);
+    printf("    file time %s, %ld s ago\n", s, (long)age);
+    check_ok("file time is the RTC time", (r == FR_OK) && (age >= 0) && (age <= 5));
 
     int ok = 1;
     r = f_open(&fil, DATA_FILE, FA_READ);
@@ -439,7 +486,11 @@ static void boot_counter(void)
             boots++;
         }
         /* f_gets left the pointer at the end */
-        f_printf(&fil, "boot %u, %lu ms after reset\n", boots + 1u, (unsigned long)ms_ticks);
+        struct tm now;
+        char s[24];
+        rtc_get_time(&now);
+        fmt_time(s, sizeof s, &now);
+        f_printf(&fil, "boot %u at %s, %lu ms after reset\n", boots + 1u, s, (unsigned long)ms_ticks);
         r = f_close(&fil);
     }
     if (check_fr("append to " BOOT_FILE, r)) {
@@ -463,7 +514,9 @@ int main(void)
     printf("\n\nSD card + FatFs R0.16 over SPI on the %s, CPU %lu MHz\n",
            BOARD_NAME, (unsigned long)(clock_cpu_hz() / 1000000u));
     printf("Card: SCK PB2, MISO PB3, MOSI PA7, CS PB4\n");
-    printf("Data CRC: %s\n\n", SDCARD_HW_CRC_NAME);
+    printf("Data CRC: %s\n", SDCARD_HW_CRC_NAME);
+    rtc_start();
+    printf("\n");
 
     int r = sdcard_init();
     if (r != SDCARD_OK) {

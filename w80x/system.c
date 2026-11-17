@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "w80x.h"
+#include "w80x_utils.h"
 
 uint32_t SystemCoreClock = W80X_PLL_HZ / 6u;   /* refreshed in SystemInit */
 
@@ -144,12 +145,10 @@ void SystemInit(void)
 
 void delay_ticks(uint32_t ticks)
 {
-    uint32_t prev = CPU_TICKS;
+    uint32_t last = CPU_TICKS;
 
     while (ticks) {
-        uint32_t now = CPU_TICKS;
-        uint32_t elapsed = (prev - now) & CORET_MAX;   /* down-counter */
-        prev = now;
+        uint32_t elapsed = cpu_cycles_step(&last);
         if (elapsed >= ticks) {
             break;
         }

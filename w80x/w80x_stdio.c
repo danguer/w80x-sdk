@@ -8,13 +8,19 @@
  * stdout is line-buffered by newlib: text shows up at "\n", or call
  * fflush(stdout). stderr is unbuffered.
  *
+ * time() and gettimeofday() read the RTC (w80x_rtc.h) as UTC, to the second.
+ * They fail (time() returns -1) while the RTC is stopped: call rtc_init() or
+ * rtc_set_time() first.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include <errno.h>
 #include <stddef.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include "w80x.h"
 #include "w80x_uart.h"
+#include "w80x_rtc.h"
 
 #define W80X_WEAK __attribute__((weak))
 
@@ -104,6 +110,21 @@ W80X_WEAK int _kill(int pid, int sig)
     return -1;
 }
 
+/* time(), gettimeofday(): the RTC, whole seconds (tv_usec is 0). */
+W80X_WEAK int _gettimeofday(struct timeval *tv, void *tz)
+{
+    (void)tz;
+    if (!rtc_is_running()) {
+        errno = EAGAIN;
+        return -1;
+    }
+    if (tv) {
+        tv->tv_sec  = rtc_get_unix();
+        tv->tv_usec = 0;
+    }
+    return 0;
+}
+
 /* exit() / abort(): flush the console and stop. */
 W80X_WEAK void _exit(int status)
 {
@@ -131,3 +152,4 @@ W80X_SYSCALL_ALIAS(lseek,  _lseek);
 W80X_SYSCALL_ALIAS(getpid, _getpid);
 W80X_SYSCALL_ALIAS(fstat,  _fstat);
 W80X_SYSCALL_ALIAS(kill,   _kill);
+W80X_SYSCALL_ALIAS(gettimeofday, _gettimeofday);

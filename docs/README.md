@@ -7,7 +7,8 @@ machine translation that is often hard to follow.
 
 Each chapter combines:
 
-- **the register manual** (WM_W800 Register Manual v2.1), rewritten and
+- **the register manual** (WM_W800 Register Manual v2.1; v3.0 has the same
+  content in the chapters checked so far), rewritten and
   checked against the register definitions in WinnerMicro's wm_iot_sdk;
 - **what was found on hardware** (an HLK-W801-KIT-V1.1), where the manual is
   unclear, incomplete or wrong.
@@ -17,11 +18,14 @@ manual contradicts itself, the chapter says so and shows both values.
 
 ## Contents
 
+The SDK's API is described separately, in [api/](api/README.md).
+
 ### MCU
 
 | Chapter | Covers |
 |---|---|
 | [Clock and reset (CLK)](mcu/clock.md) | Clock tree, buses, CPU clock settings, peripheral clock gating and reset, reset cause |
+| [Real-time clock (RTC)](mcu/rtc.md) | Calendar counter and alarm in the PMU, 32 kHz clock sources, PMU interrupt flags |
 
 ## Conventions
 

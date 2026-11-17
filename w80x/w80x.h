@@ -206,6 +206,59 @@ typedef struct {
 #define CLK_RSTSTAT_CPU_CLR   BIT(8)   /* WO: write 1 to clear CLK_RSTSTAT_CPU */
 
 /* ------------------------------------------------------------------------ */
+/* PMU and RTC (manual chapters 20 and 21; bit positions checked against    */
+/* wm_iot_sdk wm_pmu_reg_struct.h / wm_rtc_reg_struct.h and wm_sdk_w80x,    */
+/* where the manual disagrees: see docs/mcu/rtc.md)                         */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    __IO uint32_t CTRL;      /* 0x00 PS_CR: 32K clock, standby/sleep        */
+    __IO uint32_t TIMER0;    /* 0x04 PMU timer 0 (seconds)                  */
+    __IO uint32_t TIMER1;    /* 0x08 PMU timer 1 (Wi-Fi listen interval)    */
+    __IO uint32_t RTC_R1;    /* 0x0C RTC day, hour, minute, second, alarm   */
+    __IO uint32_t RTC_R2;    /* 0x10 RTC year, month, count enable          */
+    __IO uint32_t INT_SRC;   /* 0x14 interrupt flags, write 1 to clear      */
+         uint32_t RESERVED0; /* 0x18                                        */
+    __IO uint32_t WLAN_STTS; /* 0x1C LDO / 40 MHz / WLAN idle status        */
+    __IO uint32_t BK;        /* 0x20 DPLL / crystal buffer settings         */
+} PMU_TypeDef;
+
+#define PMU ((PMU_TypeDef *)PMU_BASE)
+
+/* PMU->CTRL (PS_CR) */
+#define PMU_CTRL_STANDBY      BIT(0)   /* write 1: enter standby            */
+#define PMU_CTRL_SLEEP        BIT(1)   /* write 1: enter sleep              */
+#define PMU_CTRL_CAL32K       BIT(3)   /* RC 32K calibration: write 0 then 1 */
+#define PMU_CTRL_BYPASS32K    BIT(4)   /* 1: 32K clock = 40 MHz crystal / divider, 0: RC */
+
+/* PMU->INT_SRC: write 1 to clear a flag */
+#define PMU_INT_TIMER0        BIT(0)
+#define PMU_INT_TIMER1        BIT(1)
+#define PMU_INT_IO_WAKE       BIT(2)
+#define PMU_INT_IO_SLEEP      BIT(3)
+#define PMU_INT_RTC           BIT(4)   /* manual table says bit 5: wrong    */
+#define PMU_INT_DPLL_TIMEOUT  BIT(5)   /* RO */
+#define PMU_INT_OSC_TIMEOUT   BIT(6)   /* RO */
+#define PMU_INT_STANDBY_WAKE  BIT(7)   /* RO: woke up from standby          */
+#define PMU_INT_SLEEP_WAKE    BIT(8)   /* woke up from sleep, write 1 to clear */
+
+/* PMU->RTC_R1 / RTC_R2 (binary values, not BCD) */
+#define RTC_R1_SEC_Pos        0
+#define RTC_R1_SEC_Msk        (0x3FUL << RTC_R1_SEC_Pos)
+#define RTC_R1_MIN_Pos        8
+#define RTC_R1_MIN_Msk        (0x3FUL << RTC_R1_MIN_Pos)
+#define RTC_R1_HOUR_Pos       16
+#define RTC_R1_HOUR_Msk       (0x1FUL << RTC_R1_HOUR_Pos)
+#define RTC_R1_DAY_Pos        24
+#define RTC_R1_DAY_Msk        (0x1FUL << RTC_R1_DAY_Pos)
+#define RTC_R1_ALARM_EN       BIT(31)  /* write with this set: the fields are the alarm time */
+#define RTC_R2_MON_Pos        0
+#define RTC_R2_MON_Msk        (0xFUL << RTC_R2_MON_Pos)
+#define RTC_R2_YEAR_Pos       8        /* years since 2000 */
+#define RTC_R2_YEAR_Msk       (0x7FUL << RTC_R2_YEAR_Pos)
+#define RTC_R2_EN             BIT(16)  /* 1: the calendar counts */
+
+/* ------------------------------------------------------------------------ */
 /* GPIO (manual chapter 9)                                                  */
 /* ------------------------------------------------------------------------ */
 

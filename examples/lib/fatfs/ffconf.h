@@ -6,7 +6,7 @@
 /    FF_CODE_PAGE 437, FF_USE_LFN 1 (static buffer), FF_LFN_UNICODE 2 (UTF-8),
 /    FF_FS_RPATH 2, FF_FS_EXFAT 1, FF_NORTC_YEAR 2026.
 /  The extra API costs nothing unless called: the build uses --gc-sections.
-/  get_fattime() is a weak default in diskio_sdcard.c; define your own for an RTC.
+/  get_fattime() is a weak default in diskio_sdcard.c that reads the RTC.
 /---------------------------------------------------------------------------*/
 
 #define FFCONF_DEF	80386	/* Revision ID */

@@ -40,6 +40,7 @@
 #include "w80x.h"
 #include "w80x_gpio.h"
 #include "w80x_spi.h"
+#include "w80x_utils.h"
 #include "sdcard.h"
 
 #ifndef SDCARD_SPI_SCK
@@ -146,14 +147,12 @@ static void tmo_start(tmo_t *t, uint32_t ms)
 {
     t->last = CPU_TICKS;
     t->elapsed = 0;
-    t->limit = ms * (SystemCoreClock / 1000u);
+    t->limit = cpu_ms_to_cycles(ms);
 }
 
 static int tmo_expired(tmo_t *t)
 {
-    uint32_t now = CPU_TICKS;
-    t->elapsed += (t->last - now) & CORET_MAX;
-    t->last = now;
+    t->elapsed += cpu_cycles_step(&t->last);
     return t->elapsed >= t->limit;
 }
 

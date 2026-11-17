@@ -4,8 +4,9 @@
  * Physical drive 0 is the SD card, through whichever sdcard backend is
  * linked (SPI now, SDIO later), so f_mount(&fs, "", 1) mounts it.
  *
- * get_fattime() is weak and returns a fixed date (FF_NORTC_* in ffconf.h).
- * Define your own to stamp files with the real time.
+ * get_fattime() is weak and stamps files with the RTC time (w80x_rtc.h), or
+ * with the fixed date in ffconf.h (FF_NORTC_*) while the RTC is stopped.
+ * Define your own to use another clock.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -13,6 +14,7 @@
 #include "ff.h"
 #include "diskio.h"
 #include "sdcard.h"
+#include "w80x_rtc.h"
 
 #define SD_DRIVE 0u
 
@@ -110,7 +112,19 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 /* bits 31-25 year - 1980, 24-21 month, 20-16 day, 15-11 hour, 10-5 min, 4-0 s / 2 */
 __attribute__((weak)) DWORD get_fattime(void)
 {
-    return ((DWORD)(FF_NORTC_YEAR - 1980) << 25) | ((DWORD)FF_NORTC_MON << 21) |
-           ((DWORD)FF_NORTC_MDAY << 16);
+    struct tm t;
+
+    if (!rtc_is_running()) {
+        return ((DWORD)(FF_NORTC_YEAR - 1980) << 25) | ((DWORD)FF_NORTC_MON << 21) |
+               ((DWORD)FF_NORTC_MDAY << 16);
+    }
+    rtc_get_time(&t);
+    /* FAT dates end at 2107; the RTC goes to 2127 */
+    if (t.tm_year > (2107 - 1900)) {
+        t.tm_year = 2107 - 1900;
+    }
+    return ((DWORD)(t.tm_year - 80) << 25) | ((DWORD)(t.tm_mon + 1) << 21) |
+           ((DWORD)t.tm_mday << 16) | ((DWORD)t.tm_hour << 11) |
+           ((DWORD)t.tm_min << 5) | ((DWORD)t.tm_sec >> 1);
 }
 #endif

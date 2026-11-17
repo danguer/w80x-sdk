@@ -23,13 +23,14 @@ Register-level documentation, written as an English datasheet, is in
 
 ```
 w80x/                  the library
-  w80x.h               memory map, CLK/GPIO/UART/DMA/TIMER/SPI/GPSEC/RSA/WDG/VIC/CORET registers, IRQ numbers, CPU intrinsics
+  w80x.h               memory map, CLK/PMU/RTC/GPIO/UART/DMA/TIMER/SPI/GPSEC/RSA/WDG/VIC/CORET registers, IRQ numbers, CPU intrinsics
   w80x_clock.h/.c      CPU clock dividers, peripheral clock gating, peripheral reset
   w80x_gpio.h          GPIO driver (header-only): mode, AF, read/write, interrupts
   w80x_wdg.h           watchdog (header-only): start/feed/stop, system reset, reset cause
+  w80x_rtc.h           RTC (header-only): struct tm / time_t, time(), alarm, 32 kHz clock source
   w80x_uart.h          UART0..5 (header-only): init, baud, polled TX/RX, interrupts
-  w80x_stdio.c         newlib hooks: printf/scanf over a UART, malloc heap
-  w80x_utils.h         cycle counting (header-only): CPU_TICKS, cpu_cycles_since(), cycles to us/ms
+  w80x_stdio.c         newlib hooks: printf/scanf over a UART, malloc heap, time() from the RTC
+  w80x_utils.h         cycle counting (header-only): CPU_TICKS, cpu_cycles_since(), cpu_cycles_step(), cycles to/from us/ms
   w80x_dma.h           DMA (header-only): memory copy, peripheral requests, UART TX/RX, interrupts
   w80x_timer.h         TIMER0..TIMER5 (header-only): one-shot/periodic, interrupts, timer_delay_us/ms
   w80x_spi.h           SPI master (header-only): modes 0-3, up to 20 MHz, polled transfers
@@ -54,6 +55,7 @@ examples/              written for the HLK-W801-KIT-V1.1 (see "Board" below)
   timer/               1 ms and 250 ms timer interrupts, timer_delay_ms() checked against them
   crypto/              self-test of every crypto algorithm against standard test vectors, with speeds
   spi/                 SPI loopback self-test (one wire PA7-PB3): lengths, modes, clocks, throughput
+  rtc/                 RTC self-test (rollovers, leap years, alarm, clock accuracy), then a clock on the console
   confirm_reset_values/ reads registers before any init and compares them with the manual's reset values
   sd_fatfs/            SD card over SPI with FatFs: card info, file write/read/verify, speeds, long names
   lib/                 code shared by examples (not built on its own)
@@ -308,259 +310,10 @@ secboot), these changes were needed. They were tested with wm_iot_sdk commit
    secboot. Run `examples/confirm_reset_values` (built with `BOOT=iot`) to see
    what the wm_iot_sdk bootloader leaves in the registers and RAM.
 
-## API at a glance
+## API
 
-### Clocks (`w80x_clock.h`)
-
-```c
-clock_set_cpu_div(CLK_CPU_240MHZ);  // PLL 480 MHz / 2; also 160, 120, 96, 80, 60, 40, 24, 12, 2 MHz
-clock_set_cpu_mhz(160);             // any MHz value that divides 480
-clock_cpu_hz(); clock_apb_hz(); clock_wlan_hz(); clock_peri_hz();
-clock_enable(CLK_GATE_GPIO | CLK_GATE_UART0);
-clock_disable(CLK_GATE_I2S);
-periph_reset(CLK_RST_UART1);
-clock_jtag_enable();                // PA1/PA4 debug port
-```
-
-The CPU clock must be an integer multiple of the AHB2/APB clock (manual
-§5.3.4). `clock_set_cpu_div()` picks the WLAN divider and the bus ratio for
-you. It keeps WLAN at 160 MHz (APB 40 MHz) whenever the CPU divider allows it,
-and lowers WLAN otherwise (for example 96 MHz CPU → APB 24 MHz).
-`SystemCoreClock` is updated automatically.
-
-### GPIO (`w80x_gpio.h`)
-
-```c
-gpio_mode(PB5, GPIO_OUTPUT);
-gpio_mode(PA2, GPIO_INPUT_PULLUP);       // also GPIO_INPUT, GPIO_INPUT_PULLDOWN, GPIO_OUTPUT|GPIO_PULLUP
-gpio_set(PB5); gpio_clear(PB5); gpio_toggle(PB5); gpio_write(PB5, 1);
-int v = gpio_read(PA2);
-gpio_port_write(GPIOB, 0x0F, 0x05);      // masked port write
-gpio_af(PB19, GPIO_AF1);                 // route to an alternate function
-gpio_analog(PA1);
-
-gpio_irq_enable(PA2, GPIO_IRQ_FALLING);  // RISING, FALLING, BOTH, HIGH, LOW
-irq_enable(GPIOA_IRQn);
-__enable_irq();
-W80X_IRQ void GPIOA_IRQHandler(void) { gpio_irq_clear(PA2); /* ... */ }
-```
-
-Pins are plain integers (`PA0..PA15` = 0..15, `PB0..PB31` = 32..63), so they
-can be stored in tables or passed around.
-
-Notes from the register manual:
-- Every pin starts with its alternate function enabled. `gpio_mode()` switches it to GPIO.
-- The pull-up register is active-low and the pull-down register is active-high. The driver hides this.
-- Some pins have fixed roles: PA0 = BOOTMODE, PA1/PA4 = JTAG, PB19/PB20 = UART0 (used for flashing).
-
-### Watchdog (`w80x_wdg.h`)
-
-```c
-if (reset_status() & CLK_RSTSTAT_WDG) { /* the last reset came from the watchdog */ }
-reset_status_clear();
-
-wdg_start_ms(2000);       // reset at most 2 s after the last feed
-for (;;) { work(); wdg_feed(); }   // feed at least every 1 s (timeout / 2)
-
-wdg_stop();
-wdg_system_reset();       // software reboot (does not return)
-```
-
-The hardware resets the chip when a timeout finds the previous timeout's
-interrupt still uncleared. Feeding clears it and restarts the countdown, so the
-interrupt comes one period and the reset two periods after the last feed.
-`wdg_start_ms()` sets the period to half the timeout.
-The counter runs on the APB clock: call `wdg_start_ms()` again after
-`clock_set_cpu_div()`. Enabling `WDG_IRQn` gives an early warning one period
-(half the timeout) before the reset. See the header for the rules a handler must follow.
-
-### UART and printf (`w80x_uart.h`)
-
-```c
-uart0_init(115200);            // PB19 TX / PB20 RX, the USB-serial port
-stdio_set_uart(UART0);         // printf, puts, scanf, getchar use UART0
-printf("CPU %lu Hz\n", SystemCoreClock);   // "\n" is sent as "\r\n"
-
-uart_puts(UART0, "raw\r\n");   // no stdio, no newline translation
-int c = uart_try_getc(UART0);  // -1 if nothing received
-
-uart_pins(PB6, PB7, GPIO_AF1); // other UARTs: route the pins first
-uart_init(UART1, 9600);
-uart_set_format(UART1, UART_8E1);
-```
-
-`printf` is newlib's full version (with `%f`); it adds about 37 KB to the
-image, and the first call takes a 1 KB line buffer from the heap. Output
-appears at each `\n`, or call `fflush(stdout)`. Programs that don't use stdio
-pay nothing. The hooks in `w80x_stdio.c` are weak, so you can supply your own
-`_write()`.
-
-The baud divider comes from the APB clock: call `uart_flush()` before and
-`uart_set_baud()` after `clock_set_cpu_div()`. Watch the console with
-`make monitor` (115200 baud).
-
-### DMA (`w80x_dma.h`)
-
-```c
-dma_init();
-dma_memcpy(0, dst, src, 1024);               // channel 0, waits
-
-dma_setup(1, dst, src, len, DMA_SRC_INC | DMA_DST_INC | DMA_WIDTH_32, DMA_REQ_MEM);
-dma_irq_enable(1, DMA_IRQ_DONE);             // DMA_Channel1_IRQHandler, clear with dma_irq_clear()
-irq_enable(dma_irqn(1));
-dma_start(1);
-
-dma_uart_tx(2, UART0, buf, n);               // background UART output
-```
-
-Eight channels; channels 0-3 have their own interrupt, 4-7 share one.
-Transfers are at most 65535 bytes. Use SRAM buffers: DMA from flash isn't
-confirmed. Only one UART at a time can use DMA. Wrap (ring) mode and
-descriptor chains are included, following the vendor SDKs, but haven't been tried yet.
-
-### Timers (`w80x_timer.h`)
-
-```c
-timer_init();
-timer_start(TIMER0, 500, TIMER_MS | TIMER_PERIODIC | TIMER_IRQ);   // every 500 ms
-irq_enable(TIMER_IRQn);
-
-W80X_IRQ void TIMER_IRQHandler(void)          // shared by all six timers
-{
-    uint32_t fired = timer_irq_status();      // bit n = timer n
-    timer_irq_clear(fired);
-    if (fired & BIT(TIMER0)) { /* ... */ }
-}
-
-timer_delay_us(250);                          // waits on TIMER5 (TIMER_DELAY_ID)
-timer_delay_ms(1500);
-```
-
-Six 32-bit timers on a 1 us tick from the APB clock, counting in us or ms.
-`timer_delay_us/ms()` measure wall-clock time, so interrupts during the wait
-don't stretch them, and they reach 2^32 us or ms. `delay_us/ms()` (CORET)
-remain for short busy waits. TIMER5 is reserved for the delay functions;
-compile with `-DTIMER_DELAY_ID=TIMERn` to use another. Call `timer_init()` again
-after `clock_set_cpu_div()` (the delay functions do it themselves).
-
-### SPI (`w80x_spi.h`)
-
-```c
-spi_pins(PB2, PB3, PA7, GPIO_AF2);            // SCK, MISO, MOSI (free pins on the HLK kit)
-gpio_set(PB4); gpio_mode(PB4, GPIO_OUTPUT);   // chip select as a plain GPIO
-spi_init(8000000, SPI_MODE0);                 // returns the SCK actually set (<= request)
-
-gpio_clear(PB4);
-spi_write(cmd, 4);
-spi_read(buf, 256);                           // sends 0xFF while reading
-gpio_set(PB4);
-uint8_t r = spi_xfer(0x9F);                   // one byte each way; spi_transfer(tx, rx, n) for buffers
-```
-
-Master only, polled. SCK = APB / (2 * (div + 1)), at most 20 MHz. Data moves
-in chunks of up to 32 bytes (the FIFO size), so SCK pauses briefly between
-chunks; a GPIO chip select stays low through the whole transfer. The SPI's
-own CS pin can be routed with `gpio_af()` and driven with `spi_cs(1/0)`.
-Pin options are listed at the top of `w80x_spi.h`.
-
-### Crypto (`w80x_crypto.h`, `w80x_rsa.h`)
-
-```c
-crypto_init();
-
-uint32_t c = crc32(buf, len);                 // zlib-compatible; also crc16_modbus/ccitt, crc8, crc_calc()
-
-uint8_t digest[SHA1_SIZE];
-sha1(data, len, digest);                      // or sha1_init/update/final; md5() likewise
-
-cipher_ctx_t aes;
-aes_setup(&aes, key, CIPHER_CBC, iv);         // CIPHER_ECB / CBC / CTR; des_setup, des3_setup
-cipher_encrypt(&aes, plain, out, len);        // len = multiple of the block size
-cipher_decrypt(&aes, out, plain, len);
-
-rng_init();                                   // rng_init_analog(): raw, unwhitened bits
-uint32_t r = rng_read();                      // true random; rng_fill(buf, n)
-
-rsa_init();
-rsa_modexp(out, m, &e, 1, n, 32);             // out = m^e mod n, 1024-bit, little-endian words
-```
-
-One engine (GPSEC) does CRC, SHA1, MD5, AES-128, DES, 3DES, RC4 and the
-TRNG. It reads and writes the buffers itself and can only read SRAM (from
-flash it reads zeros), so const input in flash is copied through RAM. Calls
-wait for it to finish. CBC/CTR state lives in the context, so a message can be
-encrypted in several calls. AES keys are 128-bit only (hardware limit).
-AES-CTR runs in software over hardware ECB, because the hardware CTR mode
-builds its counter block in a scrambled order. The TRNG register is a shift
-register that takes in one new bit per analog random clock (measured: about
-every 6 us), so `rng_read()` waits
-until it has changed 32 times (~0.2 ms per word, about 19 KB/s).
-The RSA block is a Montgomery multiplier. `rsa_modexp()` builds RSA on top
-of it without a bignum library, for moduli of 128..2048 bits. At 240 MHz,
-RSA-1024 takes about 19 ms with e = 65537 and 60 ms with the private key;
-RSA-2048 about 72 ms and 390 ms. It is not
-constant-time, so think before using it with private keys.
-
-### SD card and FatFs (`examples/lib`)
-
-```make
-# project Makefile
-SRCS := main.c
-include ../lib/fatfs/fatfs.mk
-include ../lib/sdcard/sdcard_spi.mk          # the SPI backend
-include ../../w80x/w80x.mk
-```
-
-```c
-sdcard_init();                                // SCK PB2, MISO PB3, MOSI PA7, CS PB4 by default
-sdcard_read(lba, buf, n);                     // raw 512-byte sectors, if you want them
-
-FATFS fs; FIL f; UINT bw;
-f_mount(&fs, "", 1);
-f_open(&f, "/log.txt", FA_OPEN_APPEND | FA_WRITE);
-f_write(&f, "hi\n", 3, &bw);
-f_close(&f);
-```
-
-`sdcard.h` is a block API that does not depend on the bus: `sdcard_spi.c`
-implements it on the LSPI, and an SDIO backend can implement the same functions
-later. FatFs sits on top through `diskio_sdcard.c`, so FatFs code does not
-change when the backend does. The SPI backend handles SDHC/SDXC, SDSC, SD v1
-and MMC. It runs at 400 kHz for init and 20 MHz after that. CRC checking is
-on (CMD59 for the card's side, CRC16 on every block read); build with
-`CFLAGS=-DSDCARD_HW_CRC=1` to compute those CRCs on the crypto engine instead
-of a table in software. Failed reads
-and writes are retried; writes wait up to 2 s for a busy card, since cheap
-cards can exceed the spec's 500 ms. `sdcard_get_diag()` tells the command,
-response and sector of the last error. Pins and clock are `-D` options, listed at the top of
-`sdcard_spi.c`.
-
-FatFs is the unmodified R0.16 release. `ffconf.h` lists the settings changed
-from stock at its top: long file names with a UTF-8 API, exFAT, `f_mkfs`,
-`f_printf`/`f_gets`, `f_findfirst` and relative paths. Unused functions are
-removed at link time. `examples/sd_fatfs` comes to about 64 KB of flash and
-13 KB of RAM. `get_fattime()` is weak and returns a fixed date; define your own
-when you have a clock.
-
-### System (`w80x.h`)
-
-`delay_us()`, `delay_ms()` and `delay_ticks()` busy-wait on the core timer
-(CORET), so they stay correct after a clock change. `irq_enable/disable/
-set_priority()`, `irq_save()/irq_restore()`, `__enable_irq()`, `__wait()`.
-Handlers are weak symbols: define e.g. `W80X_IRQ void TIMER_IRQHandler(void)`.
-They are plain C functions (`W80X_IRQ` expands to nothing and only marks them).
-A common entry in `startup.S` saves every register a C function may clobber,
-FPU included, and calls the handler. GCC 13's own `__attribute__((isr))` is
-not used: it leaves r18-r31 and the FPU registers unsaved, so a handler that
-calls a function silently corrupts the code it interrupted.
-Define `void w80x_early_init(void)` to run code right after reset, before
-startup sets up `.data`/`.bss` and calls `SystemInit()`. Only `const` data and
-variables marked `W80X_NOINIT` can be used there. `.noinit` variables (1 KB at the top of RAM, below the stack) are never
-loaded or cleared by startup, and keep their value across a watchdog reset.
-Power-on and the RESET button lose them, so guard them with a magic value
-(see `examples/confirm_reset_values`).
-Define `void w80x_fault_hook(uint32_t vec, uint32_t epc, uint32_t epsr)` to
-report CPU exceptions (by default they just hang in `Default_Handler`).
+The API is described in [`docs/api/`](docs/api/README.md), one page per
+header, each with a short usage example and the points to watch.
 
 ## Status
 
@@ -570,6 +323,7 @@ report CPU exceptions (by default they just hang in `Default_Handler`).
 | UART / printf | tested on hardware (Xuantie-800 GCC 13, newlib) |
 | DMA | registers checked against both vendor SDKs; `examples/dma` passes on hardware |
 | Timers | manual ch. 19 and both vendor SDKs; `examples/timer` works on hardware |
+| RTC | manual ch. 20/21 and both vendor SDKs (which correct the manual); builds; `examples/rtc` not yet run on hardware |
 | SPI master | manual ch. 14 and wm_iot_sdk HAL; builds; `examples/spi` (loopback) not yet run on hardware |
 | SD card (SPI) + FatFs | `examples/sd_fatfs` passes on hardware with two SDHC cards (32 GB and 16 GB, FAT32) at 20 MHz: raw read 820-1180 KB/s; through FatFs ~350-430 KB/s write, ~530 KB/s read |
 | Crypto / RSA | tested on hardware: `examples/crypto` passes every algorithm against standard vectors, including RSA-1024 and RSA-2048 |

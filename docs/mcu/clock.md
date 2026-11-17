@@ -8,7 +8,9 @@ records why the chip last reset.
 - **SDK:** `CLK_TypeDef` / `CLK` in [`w80x.h`](../../w80x/w80x.h), driver in
   [`w80x_clock.h`](../../w80x/w80x_clock.h) and [`w80x_clock.c`](../../w80x/w80x_clock.c)
 - **Source:** WM_W800 Register Manual v2.1, chapter 5, checked against the
-  wm_iot_sdk register structs. Hardware notes come from the SDK examples
+  wm_iot_sdk register structs. v3.0 (2022-08-20, English and Chinese) has
+  the same content in this chapter, including the errors listed under
+  [Manual discrepancies](#manual-discrepancies). Hardware notes come from the SDK examples
   on an HLK-W801-KIT-V1.1.
 
 ## Registers
@@ -411,7 +413,8 @@ resets in a row with both bootloaders *(hardware)*.
 
 ## Manual discrepancies
 
-Places where the WM_W800 Register Manual v2.1 contradicts itself.
+Places where the WM_W800 Register Manual v2.1 contradicts itself. v3.0
+(English and Chinese) still has every one of them.
 [`examples/confirm_reset_values`](../../examples/confirm_reset_values/main.c)
 reads the registers before any application init and compares them with both
 manual values. A bootloader runs before every application, so these
