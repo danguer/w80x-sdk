@@ -28,6 +28,13 @@
  * -DSDCARD_HW_CRC=1 to compute the data CRCs on the crypto engine (see
  * sdcard.c) instead of in software.
  *
+ * DMA: build with -DSDCARD_SPI_DMA=1 to move the 512-byte data blocks with
+ * DMA (spi_transfer_dma() in w80x_spi.h) instead of copying them through
+ * the SPI FIFO 32 bytes at a time. It uses DMA channels SDCARD_SPI_DMA_TX_CH
+ * and SDCARD_SPI_DMA_RX_CH (default 6 and 7). Buffers must be word-aligned
+ * SRAM to use DMA; others fall back to the FIFO copy. Commands and tokens
+ * always use the FIFO.
+ *
  * The sequence follows the SD Physical Layer Simplified Spec. ch. 7 (SPI
  * mode) and ChaN's FatFs mmc_avr sample: CMD0, CMD8, ACMD41 (CMD1 for MMC),
  * CMD58, CMD16 for byte-addressed cards, CMD9/CMD10.
@@ -41,6 +48,7 @@
 #include "w80x_gpio.h"
 #include "w80x_spi.h"
 #include "w80x_utils.h"
+#include "w80x_dma.h"
 #include "sdcard.h"
 
 #ifndef SDCARD_SPI_SCK
@@ -72,6 +80,24 @@
 #endif
 #ifndef SDCARD_SPI_RETRIES
 #define SDCARD_SPI_RETRIES  3
+#endif
+#ifndef SDCARD_SPI_DMA
+#define SDCARD_SPI_DMA   0
+#endif
+#ifndef SDCARD_SPI_DMA_TX_CH
+#define SDCARD_SPI_DMA_TX_CH  6u
+#endif
+#ifndef SDCARD_SPI_DMA_RX_CH
+#define SDCARD_SPI_DMA_RX_CH  7u
+#endif
+
+/* Data blocks: DMA or the FIFO copy. */
+#if SDCARD_SPI_DMA
+#define data_read(buf, n)   spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, NULL, (buf), (n))
+#define data_write(buf, n)  spi_transfer_dma(SDCARD_SPI_DMA_TX_CH, SDCARD_SPI_DMA_RX_CH, (buf), NULL, (n))
+#else
+#define data_read(buf, n)   spi_read((buf), (n))
+#define data_write(buf, n)  spi_write((buf), (n))
 #endif
 
 /* Commands. ACMDs have bit 7 set: sd_cmd() sends CMD55 first. */
@@ -258,7 +284,7 @@ static int rx_block(uint8_t *buf, uint32_t len)
     if (tok != TOKEN_START) {
         return fail(SDCARD_ERR_CMD, tok);       /* data error token */
     }
-    if (spi_read(buf, len)) {
+    if (data_read(buf, len)) {
         return fail(SDCARD_ERR_TIMEOUT, tok);
     }
     uint8_t c[2];
@@ -282,7 +308,7 @@ static int tx_block(const uint8_t *buf, uint8_t token)
 
     uint16_t crc = SDCARD_SPI_CRC ? sdcard_crc16(0, buf, SDCARD_SECTOR_SIZE) : 0xFFFFu;
     uint8_t c[2] = { (uint8_t)(crc >> 8), (uint8_t)crc };
-    if (spi_write(buf, SDCARD_SECTOR_SIZE)) {
+    if (data_write(buf, SDCARD_SECTOR_SIZE)) {
         return fail(SDCARD_ERR_TIMEOUT, 0xFFu);
     }
     spi_write(c, 2);
@@ -497,6 +523,11 @@ int sdcard_init(void)
     gpio_mode(SDCARD_SPI_MISO, GPIO_INPUT_PULLUP);  /* MISO floats until the card drives it */
     spi_pins(SDCARD_SPI_SCK, SDCARD_SPI_MISO, SDCARD_SPI_MOSI, SDCARD_SPI_AF);
     spi_init(SDCARD_SPI_INIT_HZ, SPI_MODE0);
+#if SDCARD_SPI_DMA
+    if (!(CLK->GATE_EN & CLK_GATE_DMA)) {
+        dma_init();                                 /* leave it alone if already in use */
+    }
+#endif
     delay_ms(2);                                    /* power-up time */
 
     r = init_card();

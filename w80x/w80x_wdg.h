@@ -67,7 +67,7 @@ W80X_INLINE void wdg_start_ticks(uint32_t period)
 W80X_INLINE void wdg_start_ms(uint32_t timeout_ms)
 {
     uint64_t period = ((uint64_t)(clock_apb_hz() / 1000u) * timeout_ms) >> 1;
-    wdg_start_ticks((period > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)period);
+    wdg_start_ticks((period > UINT32_MAX) ? UINT32_MAX : (uint32_t)period);
 }
 
 /* Feed the watchdog. */

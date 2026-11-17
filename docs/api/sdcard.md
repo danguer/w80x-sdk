@@ -31,7 +31,13 @@ change when the backend does. The SPI backend handles SDHC/SDXC, SDSC, SD v1
 and MMC. It runs at 400 kHz for init and 20 MHz after that. CRC checking is
 on (CMD59 for the card's side, CRC16 on every block read); build with
 `CFLAGS=-DSDCARD_HW_CRC=1` to compute those CRCs on the crypto engine instead
-of a table in software. Failed reads
+of a table in software. Build with `CFLAGS=-DSDCARD_SPI_DMA=1` to move the
+512-byte data blocks with DMA (channels 6 and 7, set with
+`SDCARD_SPI_DMA_TX_CH` / `_RX_CH`) instead of through the SPI FIFO; buffers
+that are not word-aligned SRAM still go through the FIFO. Both options can
+be combined. DMA alone gains about 10-30 % through FatFs (measured: 464
+KB/s write, 593 KB/s read), because the software CRC takes about 520 µs per
+block, longer than the 205 µs the block spends on the wire. Failed reads
 and writes are retried; writes wait up to 2 s for a busy card, since cheap
 cards can exceed the spec's 500 ms. `sdcard_get_diag()` tells the command,
 response and sector of the last error. Pins and clock are `-D` options, listed at the top of

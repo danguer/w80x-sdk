@@ -135,6 +135,17 @@ W80X_INLINE void dma_setup(uint32_t ch, volatile void *dst, const volatile void 
     DMA->INTS = DMA_INT_CH(ch);
 }
 
+/* Drop a pending request from a peripheral (UART_SEL bits 23:8, one per
+ * request line, self-clearing; manual 6.4.4). wm_iot_sdk does this before
+ * setting up a peripheral transfer, so a request left from an earlier
+ * transfer doesn't move a word too early. */
+W80X_INLINE void dma_req_clear(dma_req_t req)
+{
+    if (req != DMA_REQ_MEM) {
+        DMA->UART_SEL = (DMA->UART_SEL & DMA_UART_SEL_Msk) | BIT(DMA_UART_SEL_REQCLR_Pos + (uint32_t)req);
+    }
+}
+
 /* Change only the addresses and length, keeping mode and flags (the
  * channel must be stopped). Handy for ping-pong buffers. */
 W80X_INLINE void dma_reload(uint32_t ch, volatile void *dst, const volatile void *src, uint32_t len)

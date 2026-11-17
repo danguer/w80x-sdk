@@ -15,6 +15,8 @@
  * only if the regulator is low-dropout; otherwise power them from 5 V.
  * Other pins and the SPI clock: see examples/lib/sdcard/sdcard_spi.c, e.g.
  *   make CFLAGS=-DSDCARD_SPI_HZ=8000000
+ * Move the data blocks with DMA instead of through the SPI FIFO:
+ *   make CFLAGS=-DSDCARD_SPI_DMA=1
  *
  * The card must hold a FAT12/16/32 or exFAT file system (a new card
  * does). This program only adds and removes files in /w801test, apart from
@@ -45,6 +47,12 @@
 #define SDCARD_HW_CRC_NAME "hardware (crypto engine, SDCARD_HW_CRC=1)"
 #else
 #define SDCARD_HW_CRC_NAME "software (table)"
+#endif
+
+#if defined(SDCARD_SPI_DMA) && SDCARD_SPI_DMA
+#define SDCARD_DATA_NAME "DMA (SDCARD_SPI_DMA=1)"
+#else
+#define SDCARD_DATA_NAME "SPI FIFO, copied by the CPU"
 #endif
 
 #define TEST_DIR    "/w801test"
@@ -515,6 +523,7 @@ int main(void)
            BOARD_NAME, (unsigned long)(clock_cpu_hz() / 1000000u));
     printf("Card: SCK PB2, MISO PB3, MOSI PA7, CS PB4\n");
     printf("Data CRC: %s\n", SDCARD_HW_CRC_NAME);
+    printf("Data blocks: %s\n", SDCARD_DATA_NAME);
     rtc_start();
     printf("\n");
 

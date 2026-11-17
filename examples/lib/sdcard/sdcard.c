@@ -121,7 +121,7 @@ uint32_t sdcard_csd_sectors(const uint8_t csd[16], sdcard_type_t type)
     }
     if ((type != SDCARD_TYPE_MMC) && (ver == 2u)) {          /* CSD 3.0: SDUC */
         uint64_t n = ((uint64_t)bits(csd, 75, 48) + 1u) << 10;
-        return (n > 0xFFFFFFFFu) ? 0xFFFFFFFFu : (uint32_t)n;
+        return (n > UINT32_MAX) ? UINT32_MAX : (uint32_t)n;
     }
     /* CSD 1.0 and MMC: (C_SIZE + 1) * 2^(C_SIZE_MULT + 2) blocks of 2^READ_BL_LEN */
     uint32_t c_size = bits(csd, 73, 62);

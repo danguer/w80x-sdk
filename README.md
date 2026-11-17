@@ -33,7 +33,7 @@ w80x/                  the library
   w80x_utils.h         cycle counting (header-only): CPU_TICKS, cpu_cycles_since(), cpu_cycles_step(), cycles to/from us/ms
   w80x_dma.h           DMA (header-only): memory copy, peripheral requests, UART TX/RX, interrupts
   w80x_timer.h         TIMER0..TIMER5 (header-only): one-shot/periodic, interrupts, timer_delay_us/ms
-  w80x_spi.h           SPI master (header-only): modes 0-3, up to 20 MHz, polled transfers
+  w80x_spi.h           SPI master (header-only): modes 0-3, up to 20 MHz, polled or DMA transfers
   w80x_crypto.h        crypto engine (header-only): CRC, SHA1, MD5, AES-128, DES, 3DES, RC4, TRNG
   w80x_rsa.h           RSA coprocessor (header-only): modular exponentiation up to 2048 bits
   boards/
@@ -324,15 +324,15 @@ header, each with a short usage example and the points to watch.
 | DMA | registers checked against both vendor SDKs; `examples/dma` passes on hardware |
 | Timers | manual ch. 19 and both vendor SDKs; `examples/timer` works on hardware |
 | RTC | manual ch. 20/21 and both vendor SDKs (which correct the manual); builds; `examples/rtc` not yet run on hardware |
-| SPI master | manual ch. 14 and wm_iot_sdk HAL; builds; `examples/spi` (loopback) not yet run on hardware |
-| SD card (SPI) + FatFs | `examples/sd_fatfs` passes on hardware with two SDHC cards (32 GB and 16 GB, FAT32) at 20 MHz: raw read 820-1180 KB/s; through FatFs ~350-430 KB/s write, ~530 KB/s read |
+| SPI master | manual ch. 14 and wm_iot_sdk HAL; `examples/spi` (loopback) passes on hardware, FIFO and DMA. At 20 MHz: FIFO copy ~1530 KB/s, DMA ~2100 KB/s (wire limit 2500 KB/s) |
+| SD card (SPI) + FatFs | `examples/sd_fatfs` passes on hardware with two SDHC cards (32 GB and 16 GB, FAT32) at 20 MHz: raw read 820-1180 KB/s; through FatFs ~350-430 KB/s write, ~530 KB/s read. With `SDCARD_SPI_DMA=1` (32 GB card): 464 KB/s write, 593 KB/s read |
 | Crypto / RSA | tested on hardware: `examples/crypto` passes every algorithm against standard vectors, including RSA-1024 and RSA-2048 |
 | Image packer | verified byte-exact against vendor output |
 | Flasher | used for every hardware test so far |
 | Startup, linker, interrupts | tested on hardware; interrupts use the common entry in `startup.S` |
 | Examples | all run on the HLK-W801-KIT-V1.1 |
 
-Planned next: PWM, I2C, PMU/sleep; SPI by DMA and slave mode.
+Planned next: PWM, I2C, PMU/sleep; SPI slave mode.
 
 ## References
 

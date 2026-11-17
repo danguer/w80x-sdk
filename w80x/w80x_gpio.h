@@ -56,6 +56,9 @@ enum {
     PB24, PB25, PB26, PB27, PB28, PB29, PB30, PB31,
 };
 
+/* "No pin": pass to spi_pins() / uart_pins() to leave a signal unrouted. */
+#define GPIO_NO_PIN  0xFFu
+
 /* Mode flags (combine: GPIO_OUTPUT | GPIO_PULLUP is allowed). */
 #define GPIO_INPUT           0x00u
 #define GPIO_OUTPUT          0x01u

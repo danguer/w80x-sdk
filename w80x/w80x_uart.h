@@ -61,14 +61,14 @@ W80X_INLINE uint32_t uart_index(UART_TypeDef *u)
 }
 
 /* Route a TX/RX pin pair to the UART. RX gets the pull-up (as the vendor
- * SDK does), so a floating line doesn't produce garbage. Pass 0xFF to skip
- * a pin. */
+ * SDK does), so a floating line doesn't produce garbage. Pass GPIO_NO_PIN to
+ * skip a pin. */
 W80X_INLINE void uart_pins(uint8_t tx, uint8_t rx, gpio_af_t af)
 {
-    if (tx != 0xFFu) {
+    if (tx != GPIO_NO_PIN) {
         gpio_af(tx, af);
     }
-    if (rx != 0xFFu) {
+    if (rx != GPIO_NO_PIN) {
         gpio_af(rx, af);
         gpio__rmw(&gpio_port(rx)->PULL_EN, gpio_mask(rx), 0);   /* 0 = pull-up on */
         gpio__rmw(&gpio_port(rx)->DN_EN, gpio_mask(rx), 0);
