@@ -399,6 +399,28 @@ const sdcard_diag_t *sdcard_get_diag(void)
     return &diag;
 }
 
+#define STR_(x) #x
+#define STR(x)  STR_(x)
+
+const char *sdcard_bus_info(void)
+{
+    return "SPI, SCK " STR(SDCARD_SPI_SCK) ", MISO " STR(SDCARD_SPI_MISO) ", MOSI "
+           STR(SDCARD_SPI_MOSI) ", CS " STR(SDCARD_SPI_CS)
+#if !SDCARD_SPI_CRC
+           "; no data CRC"
+#elif defined(SDCARD_HW_CRC) && SDCARD_HW_CRC
+           "; data CRC on the crypto engine"
+#else
+           "; data CRC in software"
+#endif
+#if SDCARD_SPI_DMA
+           "; data blocks by DMA"
+#else
+           "; data blocks through the SPI FIFO"
+#endif
+           ;
+}
+
 uint32_t sdcard_set_clock(uint32_t hz)
 {
     info.clock_hz = spi_set_clock(hz);

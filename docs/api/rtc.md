@@ -35,6 +35,10 @@ newlib has no `timegm()`, and its `mktime()` applies the `TZ` time zone and
 links the time zone code, so `rtc_timegm()` and `rtc_gmtime()` do the UTC
 conversions inline.
 
+With the old `csky-elfabiv2` toolchain (minilibc), `time_t` is 32 bits:
+`time_t` values stop at 2038 and there is no `gmtime_r()` (use `rtc_gmtime()`).
+The `struct tm` functions still cover the RTC's whole range.
+
 The RTC is part of the PMU. It counts through sleep, but not power loss (no
 battery input); whether it keeps counting through a watchdog reset is still
 to be checked. The alarm compares for equality, so an alarm time that has

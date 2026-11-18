@@ -9,7 +9,7 @@
 # project Makefile
 SRCS := main.c
 include ../lib/fatfs/fatfs.mk
-include ../lib/sdcard/sdcard_spi.mk          # the SPI backend
+include ../lib/sdcard/sdcard_spi.mk          # the SPI backend, or sdcard_sdio.mk
 include ../../w80x/w80x.mk
 ```
 
@@ -25,8 +25,8 @@ f_close(&f);
 ```
 
 `sdcard.h` is a block API that does not depend on the bus: `sdcard_spi.c`
-implements it on the LSPI, and an SDIO backend can implement the same functions
-later. FatFs sits on top through `diskio_sdcard.c`, so FatFs code does not
+implements it on the LSPI and `sdcard_sdio.c` on the SDIO host (SD bus
+mode, see below); a project links one of them. FatFs sits on top through `diskio_sdcard.c`, so FatFs code does not
 change when the backend does. The SPI backend handles SDHC/SDXC, SDSC, SD v1
 and MMC. It runs at 400 kHz for init and 20 MHz after that. CRC checking is
 on (CMD59 for the card's side, CRC16 on every block read); build with
@@ -50,3 +50,21 @@ removed at link time. `examples/sd_fatfs` comes to about 64 KB of flash and
 13 KB of RAM. `get_fattime()` is weak and stamps files with the
 RTC time ([RTC](rtc.md)), or with a fixed date (`FF_NORTC_*`) while the RTC
 is stopped; define your own to use another clock.
+
+## SDIO backend
+
+`sdcard_sdio.c` drives the card in SD bus mode through the SDIO host
+([`w80x_sdh.h`](sdh.md)): 4 data lines (or 1, `-DSDCARD_SDIO_WIDTH=1`), 20 MHz
+by default (`SDCARD_SDIO_HZ`, at most 25 MHz), CRCs computed by the controller.
+Default pins, all AF1: CLK PA9, CMD PA10, DAT0..DAT3 PA11..PA14 (each one
+a `-D` option, as for SPI). Use a plain micro-SD socket: SPI breakouts with a
+level shifter pass DAT0 one way only and leave DAT1/DAT2 unconnected.
+
+Several sectors in one call go as one multi-block transfer by DMA (channel
+`SDCARD_SDIO_DMA_CH`, default 5, up to 127 blocks) when the buffer is
+word-aligned SRAM; single sectors and other buffers go one block at a time
+through the controller's 512-byte buffer. It handles SD v1, SDSC and
+SDHC/SDXC cards, not MMC. `sdcard_bus_info()` returns the bus and pins as
+text. In `examples/sd_fatfs`, `make SDCARD_BUS=sdio` builds with it.
+
+Not yet run on hardware.

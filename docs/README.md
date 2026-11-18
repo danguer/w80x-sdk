@@ -26,6 +26,7 @@ The SDK's API is described separately, in [api/](api/README.md).
 |---|---|
 | [Clock and reset (CLK)](mcu/clock.md) | Clock tree, buses, CPU clock settings, peripheral clock gating and reset, reset cause |
 | [Real-time clock (RTC)](mcu/rtc.md) | Calendar counter and alarm in the PMU, 32 kHz clock sources, PMU interrupt flags |
+| [SDIO host (SDH)](mcu/sdio.md) | SD/SDIO/MMC bus controller: clock, command and response buffer, single and multi-block transfers, DMA |
 
 ## Conventions
 

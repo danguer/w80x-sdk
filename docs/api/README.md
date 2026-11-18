@@ -28,10 +28,11 @@ for the part you use, and link with `w80x/w80x.mk`.
 | [DMA](dma.md) | `w80x_dma.h` | Memory copy, peripheral requests, UART DMA, interrupts |
 | [Timers](timer.md) | `w80x_timer.h` | TIMER0..5, one-shot and periodic, interrupts, wall-clock delays |
 | [SPI](spi.md) | `w80x_spi.h` | SPI master, modes 0–3, up to 20 MHz |
+| [SDIO host](sdh.md) | `w80x_sdh.h` | SD bus: clock, commands, responses, data blocks (CPU or DMA) |
 | [Crypto](crypto.md) | `w80x_crypto.h`, `w80x_rsa.h` | CRC, SHA1, MD5, AES, DES/3DES, true RNG, RSA |
 
 ### Libraries (`examples/lib`)
 
 | Page | Source | Covers |
 |---|---|---|
-| [SD card and FatFs](sdcard.md) | `examples/lib/sdcard`, `examples/lib/fatfs` | SD cards over SPI, FAT/exFAT file system |
+| [SD card and FatFs](sdcard.md) | `examples/lib/sdcard`, `examples/lib/fatfs` | SD cards over SPI or SDIO, FAT/exFAT file system |

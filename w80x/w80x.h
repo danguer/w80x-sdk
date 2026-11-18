@@ -560,6 +560,102 @@ typedef struct {
 #define SPI_STATUS_BUSY         BIT(12)
 
 /* ------------------------------------------------------------------------ */
+/* SDIO host (SD/MMC host controller, manual ch. 13). CLK, CMD, DAT0..3.    */
+/* Layout from wm_iot_sdk wm_sdh_reg_struct.h; values from the manual's     */
+/* tables 2, 3 and 5 and wm_sdk_w80x's wm_sdio_host.c.                     */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    __IO uint32_t CTRL;      /* 0x00 mode, bus width, clock divider, speed          */
+    __IO uint32_t IO;        /* 0x04 command / data transfer start and type         */
+    __IO uint32_t BYTECNT;   /* 0x08 bytes in a single data transfer                */
+    __I  uint32_t TR_BLOCKS; /* 0x0C blocks done in a multi-block transfer          */
+    __IO uint32_t CRCCTL;    /* 0x10 CRC enables and error flags                    */
+    __I  uint32_t CMD_CRC;   /* 0x14 last command CRC7                              */
+    __I  uint32_t DAT_CRCL;  /* 0x18 data CRC16, low byte                           */
+    __I  uint32_t DAT_CRCH;  /* 0x1C data CRC16, high byte                          */
+    __IO uint32_t PORT;      /* 0x20 line levels, Ncr timeout                       */
+    __IO uint32_t INT_MASK;  /* 0x24 1 = interrupt enabled                          */
+    __IO uint32_t INT_SRC;   /* 0x28 status (also while masked), write 1 to clear   */
+    __IO uint32_t CARDSEL;   /* 0x2C enable, card clock, 1 MHz time base            */
+    __IO uint32_t SIG;       /* 0x30 line states                                    */
+    __IO uint32_t MBCTL;     /* 0x34 multi-block start, direction, timeout units    */
+    __IO uint32_t BLOCKCNT;  /* 0x38 blocks in a multi-block transfer               */
+    __IO uint32_t TIMEOUTCNT;/* 0x3C data timeout = count * unit (MBCTL)            */
+    __IO uint32_t CMD_BUF[16];/* 0x40 one byte each: command out, response in       */
+    __IO uint32_t BUF_CTL;   /* 0x80 data buffer: direction, DMA, flush             */
+    uint32_t      RESERVED[31];
+    __IO uint32_t DATA_BUF[128]; /* 0x100 512-byte data buffer (a FIFO)             */
+} SDH_TypeDef;
+
+#define SDH ((SDH_TypeDef *)SDIO_HOST_BASE)
+#define SDH_BLOCK_SIZE          512u
+
+/* CTRL */
+#define SDH_CTRL_MMC            BIT(0)             /* 1 = SD/MMC bus, 0 = SPI */
+#define SDH_CTRL_AUTO_SIG       BIT(1)
+#define SDH_CTRL_OPEN_DRAIN     BIT(2)             /* reset value 1; 0 = push-pull */
+#define SDH_CTRL_CLKSEL_Pos     3                  /* clock = base / (2 * (sel + 1)) */
+#define SDH_CTRL_CLKSEL_Msk     (7u << SDH_CTRL_CLKSEL_Pos)
+#define SDH_CTRL_HIGH_SPEED     BIT(6)             /* base clock: 1 = hclk, 0 = the 1 MHz time base */
+#define SDH_CTRL_WIDTH4         BIT(7)             /* 4-bit data bus */
+#define SDH_CTRL_SDIO           BIT(8)             /* SDIO card (not memory) */
+
+/* IO: writing it starts the operation. Manual table 3. */
+#define SDH_IO_DATA_START       BIT(0)             /* single data block; self-clearing */
+#define SDH_IO_DATA_READ        BIT(1)             /* 1 = read, 0 = write */
+#define SDH_IO_CMD_START        BIT(2)             /* command / response / clocks; self-clearing */
+#define SDH_IO_RECEIVE          BIT(3)
+#define SDH_IO_LONG_RESP        BIT(4)             /* 136-bit response (CID, CSD) */
+#define SDH_IO_CLOCKS           BIT(5)             /* 8 clocks only */
+#define SDH_IO_AUTO_RESP        BIT(6)             /* receive the response after the command */
+#define SDH_IO_AUTO_CLOCKS      BIT(7)
+/* The combinations wm_sdk_w80x uses */
+#define SDH_IO_CMD_NORESP       SDH_IO_CMD_START                                       /* 0x04 */
+#define SDH_IO_CMD_SHORT        (SDH_IO_AUTO_RESP | SDH_IO_CMD_START)                  /* 0x44 */
+#define SDH_IO_CMD_LONG         (SDH_IO_AUTO_RESP | SDH_IO_LONG_RESP | SDH_IO_CMD_START) /* 0x54 */
+#define SDH_IO_8_CLOCKS         (SDH_IO_CLOCKS | SDH_IO_CMD_START)                     /* 0x24 */
+
+/* CRCCTL */
+#define SDH_CRCCTL_DAT_ERR      BIT(0)
+#define SDH_CRCCTL_CMD_ERR      BIT(1)
+#define SDH_CRCCTL_DAT_EN       BIT(6)
+#define SDH_CRCCTL_CMD_EN       BIT(7)
+
+/* INT_MASK / INT_SRC */
+#define SDH_INT_CMD_DONE        BIT(0)
+#define SDH_INT_DATA_DONE       BIT(1)
+#define SDH_INT_DATA_CRC        BIT(2)             /* CRC error in a received block */
+#define SDH_INT_CMD_CRC         BIT(3)             /* CRC error in a response (normal for R2/R3) */
+#define SDH_INT_MULTI_DONE      BIT(4)
+#define SDH_INT_DATA_TIMEOUT    BIT(5)             /* data or busy timeout */
+#define SDH_INT_NCR_TIMEOUT     BIT(6)             /* no response */
+#define SDH_INT_CRC_TOKEN       BIT(7)             /* card rejected a written block */
+#define SDH_INT_SDIO            BIT(8)
+#define SDH_INT_ALL             0x1FFUL
+
+/* CARDSEL */
+#define SDH_CARDSEL_TIMEBASE_Msk 0x3Fu             /* 1 MHz = hclk / ((n + 1) * 2) */
+#define SDH_CARDSEL_CARD_CLK    BIT(6)
+#define SDH_CARDSEL_ENABLE      BIT(7)
+
+/* MBCTL. Units for the timeouts: 0 = 1 us, 1 = 100 us, 2 = 10 ms, 3 = 1 s. */
+#define SDH_MBCTL_START         BIT(0)             /* multi-block data; self-clearing */
+#define SDH_MBCTL_READ          BIT(1)
+#define SDH_MBCTL_BUSY_UNIT_Pos 4
+#define SDH_MBCTL_NAC_UNIT_Pos  6
+
+/* BUF_CTL */
+#define SDH_BUF_FULL            BIT(0)
+#define SDH_BUF_EMPTY           BIT(1)
+#define SDH_BUF_LEVEL_Pos       2                  /* DMA request level, words (< 128) */
+#define SDH_BUF_LEVEL(words)    (((uint32_t)(words) & 0xFFu) << SDH_BUF_LEVEL_Pos)
+#define SDH_BUF_DMA             BIT(10)            /* DMA moves the data; clears itself when done */
+#define SDH_BUF_WRITE           BIT(11)            /* 1 = to the card */
+#define SDH_BUF_DMA_REQ_MASK    BIT(14)
+#define SDH_BUF_FLUSH           BIT(15)            /* empty the buffer; self-clearing */
+
+/* ------------------------------------------------------------------------ */
 /* GPSEC general crypto engine (manual ch. 7): SHA1/MD5/AES/DES/3DES/RC4/   */
 /* CRC/RNG. It DMAs SRC_ADDR -> DEST_ADDR for CFG.TOTAL bytes by itself.    */
 /* Bit layout cross-checked with wm_iot_sdk wm_gpsec_reg_struct.h.          */

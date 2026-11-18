@@ -34,6 +34,7 @@ w80x/                  the library
   w80x_dma.h           DMA (header-only): memory copy, peripheral requests, UART TX/RX, interrupts
   w80x_timer.h         TIMER0..TIMER5 (header-only): one-shot/periodic, interrupts, timer_delay_us/ms
   w80x_spi.h           SPI master (header-only): modes 0-3, up to 20 MHz, polled or DMA transfers
+  w80x_sdh.h           SDIO host (header-only): SD bus clock, commands, data blocks by CPU or DMA
   w80x_crypto.h        crypto engine (header-only): CRC, SHA1, MD5, AES-128, DES, 3DES, RC4, TRNG
   w80x_rsa.h           RSA coprocessor (header-only): modular exponentiation up to 2048 bits
   boards/
@@ -57,10 +58,10 @@ examples/              written for the HLK-W801-KIT-V1.1 (see "Board" below)
   spi/                 SPI loopback self-test (one wire PA7-PB3): lengths, modes, clocks, throughput
   rtc/                 RTC self-test (rollovers, leap years, alarm, clock accuracy), then a clock on the console
   confirm_reset_values/ reads registers before any init and compares them with the manual's reset values
-  sd_fatfs/            SD card over SPI with FatFs: card info, file write/read/verify, speeds, long names
+  sd_fatfs/            SD card over SPI or SDIO with FatFs: card info, file write/read/verify, speeds, long names
   lib/                 code shared by examples (not built on its own)
     fatfs/             FatFs R0.16 (ChaN) + diskio_sdcard.c glue; fatfs.mk
-    sdcard/            SD/MMC block API (sdcard.h), shared CRC/CSD/CID code, SPI backend; sdcard_spi.mk
+    sdcard/            SD/MMC block API (sdcard.h), shared CRC/CSD/CID code, SPI and SDIO backends; sdcard_spi.mk / sdcard_sdio.mk
 ```
 
 ## Board
@@ -155,6 +156,13 @@ export PATH="$HOME/opt/csky-elfabiv2/bin:$PATH"
 
 Both compilers work. Interrupt handlers do not rely on the compiler's `isr`
 attribute (see System below), so no compiler-specific flags are needed.
+
+This toolchain's C library is minilibc rather than newlib. `w80x_stdio.c`
+handles the differences: `printf()` and `scanf()` go through `fputc()` and
+`fgetc()`, which it provides, and it defines `time()`. One limit remains:
+minilibc's `time_t` is 32 bits, so `time_t` values (`time()`,
+`rtc_get_unix()`, `rtc_timegm()`) stop at 2038. The RTC itself, and the
+`struct tm` functions, still cover 2000..2127.
 
 ### Option B2: official T-Head download
 
@@ -326,6 +334,7 @@ header, each with a short usage example and the points to watch.
 | RTC | manual ch. 20/21 and both vendor SDKs (which correct the manual); builds; `examples/rtc` not yet run on hardware |
 | SPI master | manual ch. 14 and wm_iot_sdk HAL; `examples/spi` (loopback) passes on hardware, FIFO and DMA. At 20 MHz: FIFO copy ~1530 KB/s, DMA ~2100 KB/s (wire limit 2500 KB/s) |
 | SD card (SPI) + FatFs | `examples/sd_fatfs` passes on hardware with two SDHC cards (32 GB and 16 GB, FAT32) at 20 MHz: raw read 820-1180 KB/s; through FatFs ~350-430 KB/s write, ~530 KB/s read. With `SDCARD_SPI_DMA=1` (32 GB card): 464 KB/s write, 593 KB/s read |
+| SD card (SDIO) | `sdcard_sdio.c` / `w80x_sdh.h` from manual ch. 13 and wm_sdk_w80x's wm_sdio_host.c; builds, not yet run on hardware |
 | Crypto / RSA | tested on hardware: `examples/crypto` passes every algorithm against standard vectors, including RSA-1024 and RSA-2048 |
 | Image packer | verified byte-exact against vendor output |
 | Flasher | used for every hardware test so far |

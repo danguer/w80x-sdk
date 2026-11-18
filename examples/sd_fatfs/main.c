@@ -1,12 +1,12 @@
 /*
- * sd_fatfs - FatFs on an SD card over SPI: card info, raw read speed,
+ * sd_fatfs - FatFs on an SD card over SPI or SDIO: card info, raw read speed,
  * directory listing, file write/read/verify with throughput, long file
  * names, rename/delete, file timestamps from the RTC, and a boot counter
  * kept in a file. The RTC is set to the build time at power-on.
  *
  * Board: HLK-W801-KIT-V1.1. Output on UART0, 115200 baud (`make monitor`).
  *
- * WIRING (an SD card breakout or a micro-SD socket, 3.3 V card supply):
+ * SPI (default, `make`): an SD card breakout or a micro-SD socket, 3.3 V:
  *
  *   card SCK  -> PB2     card MISO -> PB3     card MOSI -> PA7
  *   card CS   -> PB4     VDD -> 3.3 V         GND -> GND
@@ -17,6 +17,15 @@
  *   make CFLAGS=-DSDCARD_SPI_HZ=8000000
  * Move the data blocks with DMA instead of through the SPI FIFO:
  *   make CFLAGS=-DSDCARD_SPI_DMA=1
+ *
+ * SDIO (`make SDCARD_BUS=sdio`): a plain micro-SD socket, no level shifter:
+ *
+ *   card CLK  -> PA9     card CMD  -> PA10    card DAT0 -> PA11
+ *   card DAT1 -> PA12    card DAT2 -> PA13    card DAT3 -> PA14
+ *   VDD -> 3.3 V         GND -> GND
+ *
+ * 4-bit bus at 20 MHz; see examples/lib/sdcard/sdcard_sdio.c for the
+ * options, e.g. make SDCARD_BUS=sdio CFLAGS=-DSDCARD_SDIO_WIDTH=1
  *
  * The card must hold a FAT12/16/32 or exFAT file system (a new card
  * does). This program only adds and removes files in /w801test, apart from
@@ -47,12 +56,6 @@
 #define SDCARD_HW_CRC_NAME "hardware (crypto engine, SDCARD_HW_CRC=1)"
 #else
 #define SDCARD_HW_CRC_NAME "software (table)"
-#endif
-
-#if defined(SDCARD_SPI_DMA) && SDCARD_SPI_DMA
-#define SDCARD_DATA_NAME "DMA (SDCARD_SPI_DMA=1)"
-#else
-#define SDCARD_DATA_NAME "SPI FIFO, copied by the CPU"
 #endif
 
 #define TEST_DIR    "/w801test"
@@ -166,7 +169,7 @@ static void card_info(void)
     printf("      maker 0x%02x \"%s\", product \"%s\" rev %u.%u, serial %08lx, made %u/%02u\n",
            cid.mid, cid.oid, cid.pnm, cid.prv >> 4, cid.prv & 0x0Fu,
            (unsigned long)cid.psn, cid.year, cid.month);
-    printf("      OCR %08lx, SPI clock %lu kHz\n\n", (unsigned long)ci->ocr,
+    printf("      OCR %08lx, bus clock %lu kHz\n\n", (unsigned long)ci->ocr,
            (unsigned long)(ci->clock_hz / 1000u));
 }
 
@@ -261,7 +264,7 @@ static void raw_write_test(void)
             continue;
         }
         uint32_t hz = sdcard_set_clock(rates[idx]);
-        snprintf(name, sizeof name, "raw rewrite, SCK %lu kHz", (unsigned long)(hz / 1000u));
+        snprintf(name, sizeof name, "raw rewrite, clock %lu kHz", (unsigned long)(hz / 1000u));
         int ok = rewrite_once();
         printf("%-40s %s\n", name, ok ? "PASS" : "FAIL");
         if (ok) {
@@ -530,11 +533,9 @@ int main(void)
     irq_enable(TIMER_IRQn);
     __enable_irq();
 
-    printf("\n\nSD card + FatFs R0.16 over SPI on the %s, CPU %lu MHz\n",
+    printf("\n\nSD card + FatFs R0.16 on the %s, CPU %lu MHz\n",
            BOARD_NAME, (unsigned long)(clock_cpu_hz() / 1000000u));
-    printf("Card: SCK PB2, MISO PB3, MOSI PA7, CS PB4\n");
-    printf("Data CRC: %s\n", SDCARD_HW_CRC_NAME);
-    printf("Data blocks: %s\n", SDCARD_DATA_NAME);
+    printf("Card: %s\n", sdcard_bus_info());
     rtc_start();
     printf("\n");
 

@@ -11,7 +11,8 @@
  * Exactly one backend implements these functions, chosen at link time:
  *
  *   sdcard_spi.c    SPI mode, on the LSPI (include sdcard_spi.mk)
- *   (an SDIO backend will implement the same API)
+ *   sdcard_sdio.c   SD bus mode, 1 or 4 data lines, on the SDIO host
+ *                   (include sdcard_sdio.mk)
  *
  * sdcard.c holds the parts every backend shares: the CRC7 / CRC16 used
  * on the wire and the CSD / CID decoding. lib/fatfs/diskio_sdcard.c
@@ -79,9 +80,12 @@ typedef struct {
 typedef struct {
     int      err;               /* sdcard_err_t, SDCARD_OK if none since sdcard_init() */
     uint8_t  cmd;               /* command it happened in (ACMDn: 0x80 | n) */
-    uint8_t  r1;                /* the card's response to it (0xFF: none) */
+    uint8_t  r1;                /* the card's response to it (0xFF: none). SDIO:
+                                   the command index the response carried */
     uint32_t resp;              /* backend detail. SPI: data token, data response
-                                   (xxx0sss1), received CRC, or R1 << 8 | R2 of CMD13 */
+                                   (xxx0sss1), received CRC, or R1 << 8 | R2 of CMD13.
+                                   SDIO: the 32-bit response (card status), or the
+                                   controller's INT_SRC flags for a data error */
     uint32_t lba;               /* sector being transferred */
     uint32_t count;             /* errors since sdcard_init(), retried ones included */
 } sdcard_diag_t;
@@ -110,6 +114,9 @@ const sdcard_info_t *sdcard_get_info(void);
 
 /* Details of the last error. */
 const sdcard_diag_t *sdcard_get_diag(void);
+
+/* The bus and its pins, for printing, e.g. "SPI, SCK PB2, ...". */
+const char *sdcard_bus_info(void);
 
 /* Change the bus clock after sdcard_init() (at most the backend's limit).
  * Returns the rate set, also stored in sdcard_get_info()->clock_hz. */

@@ -137,25 +137,40 @@ static void rollover(struct tm from, struct tm to, const char *what)
     check(ticked && same(&now, &to), line);
 }
 
-/* rtc_timegm() / rtc_gmtime() against newlib's gmtime_r(), every 7 h 13 min
- * 17 s from 2000 to the end of 2127 (about 156,000 times). */
+/* The C library's conversion to compare with. minilibc (the old
+ * csky-elfabiv2 toolchain) has a 32-bit time_t, which ends in 2038, and no
+ * gmtime_r(). */
+#ifdef __MINILIBC__
+#define LIBC_NAME       "minilibc gmtime()"
+#define LIBC_END_YEAR   138             /* tm_year: 2038 */
+#define LIBC_MIN_COUNT  40000u
+#define libc_gmtime(secs, out) (*(out) = *gmtime(secs))
+#else
+#define LIBC_NAME       "newlib gmtime_r()"
+#define LIBC_END_YEAR   228             /* tm_year: 2128, past the RTC's range */
+#define LIBC_MIN_COUNT  100000u
+#define libc_gmtime(secs, out) gmtime_r((secs), (out))
+#endif
+
+/* rtc_timegm() / rtc_gmtime() against the C library, every 7 h 13 min 17 s
+ * from 2000 to the end of 2127 (about 156,000 times; minilibc: to 2038). */
 static void check_conversions(void)
 {
-    struct tm ours, newlib;
+    struct tm ours, libc;
     unsigned bad = 0, count = 0;
-    time_t end = rtc_timegm(&(struct tm){ .tm_year = 228, .tm_mon = 0, .tm_mday = 1 });
+    time_t end = rtc_timegm(&(struct tm){ .tm_year = LIBC_END_YEAR, .tm_mon = 0, .tm_mday = 1 });
 
     for (time_t secs = rtc_timegm(&(struct tm){ .tm_year = 100, .tm_mon = 0, .tm_mday = 1 });
          secs < end; secs += (7 * 3600) + (13 * 60) + 17) {
         rtc_gmtime(secs, &ours);
-        gmtime_r(&secs, &newlib);
-        if (!same(&ours, &newlib) || (rtc_timegm(&ours) != secs)) {
+        libc_gmtime(&secs, &libc);
+        if (!same(&ours, &libc) || (rtc_timegm(&ours) != secs)) {
             bad++;
         }
         count++;
     }
-    printf("  rtc_gmtime/rtc_timegm vs gmtime_r: %u times, %u different\n", count, bad);
-    check((bad == 0u) && (count > 100000u), "rtc_gmtime() and rtc_timegm() agree with newlib");
+    printf("  rtc_gmtime/rtc_timegm vs %s: %u times, %u different\n", LIBC_NAME, count, bad);
+    check((bad == 0u) && (count > LIBC_MIN_COUNT), "rtc_gmtime() and rtc_timegm() agree with libc");
 }
 
 /* Measure the RTC second against the CPU clock (from the 40 MHz crystal). */

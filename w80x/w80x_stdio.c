@@ -24,6 +24,17 @@
 
 #define W80X_WEAK __attribute__((weak))
 
+/* The old csky-elfabiv2 toolchain (GCC 6) ships minilibc instead of newlib:
+ * no S_IFCHR, and gettimeofday() takes a struct timezone *. */
+#ifndef S_IFCHR
+#define S_IFCHR 0020000
+#endif
+#ifdef __MINILIBC__
+typedef struct timezone w80x_tz_t;
+#else
+typedef void w80x_tz_t;
+#endif
+
 static UART_TypeDef *stdio_uart;
 
 void stdio_set_uart(UART_TypeDef *uart)
@@ -111,7 +122,7 @@ W80X_WEAK int _kill(int pid, int sig)
 }
 
 /* time(), gettimeofday(): the RTC, whole seconds (tv_usec is 0). */
-W80X_WEAK int _gettimeofday(struct timeval *tv, void *tz)
+W80X_WEAK int _gettimeofday(struct timeval *tv, w80x_tz_t *tz)
 {
     (void)tz;
     if (!rtc_is_running()) {
@@ -136,6 +147,40 @@ W80X_WEAK void _exit(int status)
     for (;;) {
     }
 }
+
+#ifdef __MINILIBC__
+/* minilibc's printf/scanf call fputc()/fgetc() instead of _write()/_read(),
+ * and its libc declares time() without defining it. */
+#include <stdio.h>
+
+W80X_WEAK int fputc(int ch, FILE *stream)
+{
+    char byte = (char)ch;
+
+    (void)stream;
+    _write(1, &byte, 1);
+    return ch & 0xFF;
+}
+
+W80X_WEAK int fgetc(FILE *stream)
+{
+    char byte;
+
+    (void)stream;
+    return (_read(0, &byte, 1) == 1) ? (unsigned char)byte : EOF;
+}
+
+W80X_WEAK time_t time(time_t *out)
+{
+    struct timeval tv;
+    time_t now = (_gettimeofday(&tv, NULL) == 0) ? (time_t)tv.tv_sec : (time_t)-1;
+
+    if (out) {
+        *out = now;
+    }
+    return now;
+}
+#endif
 
 /* Newlib can be built to call either name: the Xuantie-800 newlib's
  * _write_r() calls write(), others call _write(). Without these aliases the
