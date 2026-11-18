@@ -486,6 +486,118 @@ typedef struct {
 #define TIMER_CSR_FIELD(n)    (0x1FUL << (5u * (n)))
 
 /* ------------------------------------------------------------------------ */
+/* PWM: 5 channels with 8-bit period/compare and a 16-bit clock divider     */
+/* (manual ch. 23). Channels 0..3 share registers (one byte or bit each);   */
+/* channel 4 has its own (CH4_REG1/REG2, CAP2*). Layout cross-checked with  */
+/* wm_iot_sdk wm_pwm_reg_struct.h and wm_sdk_w80x wm_pwm.c.                 */
+/* ------------------------------------------------------------------------ */
+
+typedef struct {
+    __IO uint32_t CLKDIV01;  /* 0x00 clock dividers: CH0 [15:0], CH1 [31:16]        */
+    __IO uint32_t CLKDIV23;  /* 0x04 clock dividers: CH2 [15:0], CH3 [31:16]        */
+    __IO uint32_t CTL;       /* 0x08 enables, modes, polarity, counter types        */
+    __IO uint32_t PERIOD;    /* 0x0C period, one byte per channel 0..3              */
+    __IO uint32_t PNUM;      /* 0x10 periods to generate, one byte per channel 0..3 */
+    __IO uint32_t CMPDAT;    /* 0x14 compare (duty), one byte per channel 0..3      */
+    __IO uint32_t DTCTL;     /* 0x18 dead time for the complementary pairs          */
+    __IO uint32_t INTEN;     /* 0x1C interrupt enables                              */
+    __IO uint32_t INTSTS;    /* 0x20 interrupt flags, write 1 to clear              */
+    __I  uint32_t CAPDAT;    /* 0x24 channel 0 capture: rising [15:0], falling [31:16] */
+    __IO uint32_t BRKCTL;    /* 0x28 brake enable and level per channel             */
+    __IO uint32_t CH4_REG1;  /* 0x2C channel 4: PNUM [7:0], PERIOD [15:8], CLKDIV [31:16] */
+    __IO uint32_t CH4_REG2;  /* 0x30 channel 4: polarity, mode, counter type, CMP [15:8] */
+    __I  uint32_t CAP2DAT;   /* 0x34 channel 4 capture: rising [15:0], falling [31:16] */
+    __IO uint32_t CAP2CTL;   /* 0x38 channel 4 capture control and flags            */
+} PWM_TypeDef;
+
+#define PWM ((PWM_TypeDef *)PWM_BASE)
+#define PWM_NUM               5u
+
+#define PWM0                  0u
+#define PWM1                  1u
+#define PWM2                  2u
+#define PWM3                  3u
+#define PWM4                  4u
+
+#define PWM_CLKDIV_Msk        0xFFFFu
+#define PWM_PERIOD_MAX        255u
+
+/* PWM_CTL. Per-channel bits: n = 0..3 unless noted. */
+#define PWM_CTL_OUTMODE_COMP(pair) BIT(pair)                 /* pair 0 = CH0/CH1, 1 = CH2/CH3: complementary */
+#define PWM_CTL_PINV(n)       BIT(2u + (n))                  /* invert the output                    */
+#define PWM_CTL_ALLSYNC       BIT(6)                         /* all channels follow CH0              */
+#define PWM_CTL_CNTMODE(n)    BIT(8u + (n))                  /* 1 = auto-reload, 0 = one-shot (PNUM) */
+#define PWM_CTL_POEN          BIT(12)                        /* CH0 pin: 1 = tri-state (capture), 0 = output */
+#define PWM_CTL_TWOSYNC(pair) BIT(14u + (pair))              /* CH1 follows CH0 / CH3 follows CH2    */
+#define PWM_CTL_CNTTYPE_Pos(n) (16u + (2u * (n)))
+#define PWM_CTL_CNTTYPE_Msk(n) (3UL << PWM_CTL_CNTTYPE_Pos(n))
+#define PWM_CTL_CPEN          BIT(24)                        /* CH0 capture                          */
+#define PWM_CTL_CAPINV        BIT(25)                        /* CH0 capture input inverted           */
+#define PWM_CTL_CNTEN_Pos     27u
+#define PWM_CTL_CNTEN(n)      BIT(PWM_CTL_CNTEN_Pos + (n))   /* counter running, n = 0..4            */
+#define PWM_CTL_CNTEN_Msk     (0x1FUL << PWM_CTL_CNTEN_Pos)
+
+/* Counter types (PWM_CTL CNTTYPEn, CH4_REG2 [4:3]) */
+#define PWM_CNTTYPE_UP        0u     /* edge-aligned, counting up: capture only   */
+#define PWM_CNTTYPE_DOWN      1u     /* edge-aligned, counting down: PWM output   */
+#define PWM_CNTTYPE_CENTER    2u     /* center-aligned: PWM output                */
+
+/* PWM_DTCTL */
+#define PWM_DTCTL_CNT_Pos(pair) (8u * (pair))                /* dead time, in dead-time clocks       */
+#define PWM_DTCTL_CNT_Msk(pair) (0xFFUL << PWM_DTCTL_CNT_Pos(pair))
+#define PWM_DTCTL_DIV_Pos     16u                            /* dead-time clock = PWM clock / 2^DIV  */
+#define PWM_DTCTL_DIV_Msk     (3UL << PWM_DTCTL_DIV_Pos)
+#define PWM_DTCTL_EN(pair)    BIT(20u + (pair))
+
+/* PWM_INTEN */
+#define PWM_INTEN_PIEN(n)     BIT(n)                         /* period-count interrupt, n = 0..4     */
+#define PWM_INTEN_RLIEN       BIT(5)                         /* CH0 capture, rising edge             */
+#define PWM_INTEN_FLIEN       BIT(6)                         /* CH0 capture, falling edge            */
+#define PWM_INTEN_DMA         BIT(7)                         /* CH0 capture DMA request              */
+
+/* PWM_INTSTS (write 1 to clear) */
+#define PWM_INTSTS_PIF(n)     BIT(n)                         /* PNUM periods done, n = 0..4          */
+#define PWM_INTSTS_PIF_ALL    0x1Fu
+#define PWM_INTSTS_CRLIF      BIT(5)                         /* CH0 rising edge captured             */
+#define PWM_INTSTS_CFLIF      BIT(6)                         /* CH0 falling edge captured            */
+#define PWM_INTSTS_RLIFOV     BIT(7)
+#define PWM_INTSTS_FLIFOV     BIT(8)
+#define PWM_INTSTS_OVERFL     BIT(9)
+
+/* PWM_BRKCTL, n = 0..4 */
+#define PWM_BRKCTL_LEVEL(n)   BIT(3u + (n))                  /* output while braking: 1 = high       */
+#define PWM_BRKCTL_EN(n)      BIT(11u + (n))
+
+/* PWM_CH4_REG1 */
+#define PWM_CH4_PNUM_Pos      0u
+#define PWM_CH4_PNUM_Msk      (0xFFUL << PWM_CH4_PNUM_Pos)
+#define PWM_CH4_PERIOD_Pos    8u
+#define PWM_CH4_PERIOD_Msk    (0xFFUL << PWM_CH4_PERIOD_Pos)
+#define PWM_CH4_CLKDIV_Pos    16u
+#define PWM_CH4_CLKDIV_Msk    (0xFFFFUL << PWM_CH4_CLKDIV_Pos)
+
+/* PWM_CH4_REG2 */
+#define PWM_CH4_PINV          BIT(0)
+#define PWM_CH4_CNTMODE       BIT(1)                         /* 1 = auto-reload                      */
+#define PWM_CH4_CNTTYPE_Pos   3u
+#define PWM_CH4_CNTTYPE_Msk   (3UL << PWM_CH4_CNTTYPE_Pos)
+#define PWM_CH4_CMP_Pos       8u
+#define PWM_CH4_CMP_Msk       (0xFFUL << PWM_CH4_CMP_Pos)
+
+/* PWM_CAP2CTL (channel 4) */
+#define PWM_CAP2_CAPINV       BIT(0)
+#define PWM_CAP2_CPEN         BIT(1)
+#define PWM_CAP2_POEN         BIT(2)                         /* CH4 pin: 1 = tri-state, 0 = output   */
+#define PWM_CAP2_CRLIF        BIT(3)
+#define PWM_CAP2_CFLIF        BIT(4)
+#define PWM_CAP2_RLIFOV       BIT(5)
+#define PWM_CAP2_FLIFOV       BIT(6)
+#define PWM_CAP2_OVERFL       BIT(7)
+#define PWM_CAP2_RLIEN        BIT(8)
+#define PWM_CAP2_FLIEN        BIT(9)
+#define PWM_CAP2_DMA          BIT(10)
+
+/* ------------------------------------------------------------------------ */
 /* LSPI: SPI master/slave (manual ch. 14). 8-word (32-byte) TX and RX FIFOs. */
 /* ------------------------------------------------------------------------ */
 

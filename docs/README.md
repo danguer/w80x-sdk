@@ -25,7 +25,9 @@ The SDK's API is described separately, in [api/](api/README.md).
 | Chapter | Covers |
 |---|---|
 | [Clock and reset (CLK)](mcu/clock.md) | Clock tree, buses, CPU clock settings, peripheral clock gating and reset, reset cause |
+| [Pin alternate functions (GPIO AF)](mcu/gpio_af.md) | AF1..AF4, ADC and touch for every pin, by pin and by peripheral, reserved pins |
 | [Real-time clock (RTC)](mcu/rtc.md) | Calendar counter and alarm in the PMU, 32 kHz clock sources, PMU interrupt flags |
+| [PWM controller (PWM)](mcu/pwm.md) | 5 channels: dividers, period/compare waveform, one-shot counts, pairs and dead time, brake, capture registers, pins |
 | [SDIO host (SDH)](mcu/sdio.md) | SD/SDIO/MMC bus controller: clock, command and response buffer, single and multi-block transfers, DMA |
 
 ## Conventions

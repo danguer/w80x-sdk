@@ -27,6 +27,7 @@ for the part you use, and link with `w80x/w80x.mk`.
 | [UART and printf](uart.md) | `w80x_uart.h` | UART0..5, baud and format, polled I/O, `printf` over a UART |
 | [DMA](dma.md) | `w80x_dma.h` | Memory copy, peripheral requests, UART DMA, interrupts |
 | [Timers](timer.md) | `w80x_timer.h` | TIMER0..5, one-shot and periodic, interrupts, wall-clock delays |
+| [PWM](pwm.md) | `w80x_pwm.h` | 5 PWM outputs: rate, duty, polarity, pulse counts, complementary pairs, brake |
 | [SPI](spi.md) | `w80x_spi.h` | SPI master, modes 0–3, up to 20 MHz |
 | [SDIO host](sdh.md) | `w80x_sdh.h` | SD bus: clock, commands, responses, data blocks (CPU or DMA) |
 | [Crypto](crypto.md) | `w80x_crypto.h`, `w80x_rsa.h` | CRC, SHA1, MD5, AES, DES/3DES, true RNG, RSA |

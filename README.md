@@ -23,7 +23,7 @@ Register-level documentation, written as an English datasheet, is in
 
 ```
 w80x/                  the library
-  w80x.h               memory map, CLK/PMU/RTC/GPIO/UART/DMA/TIMER/SPI/GPSEC/RSA/WDG/VIC/CORET registers, IRQ numbers, CPU intrinsics
+  w80x.h               memory map, CLK/PMU/RTC/GPIO/UART/DMA/TIMER/PWM/SPI/GPSEC/RSA/WDG/VIC/CORET registers, IRQ numbers, CPU intrinsics
   w80x_clock.h/.c      CPU clock dividers, peripheral clock gating, peripheral reset
   w80x_gpio.h          GPIO driver (header-only): mode, AF, read/write, interrupts
   w80x_wdg.h           watchdog (header-only): start/feed/stop, system reset, reset cause
@@ -33,6 +33,7 @@ w80x/                  the library
   w80x_utils.h         cycle counting (header-only): CPU_TICKS, cpu_cycles_since(), cpu_cycles_step(), cycles to/from us/ms
   w80x_dma.h           DMA (header-only): memory copy, peripheral requests, UART TX/RX, interrupts
   w80x_timer.h         TIMER0..TIMER5 (header-only): one-shot/periodic, interrupts, timer_delay_us/ms
+  w80x_pwm.h           PWM (header-only): 5 channels, rate and duty, one-shot pulse counts, complementary pairs with dead time
   w80x_spi.h           SPI master (header-only): modes 0-3, up to 20 MHz, polled or DMA transfers
   w80x_sdh.h           SDIO host (header-only): SD bus clock, commands, data blocks by CPU or DMA
   w80x_crypto.h        crypto engine (header-only): CRC, SHA1, MD5, AES-128, DES, 3DES, RC4, TRNG
@@ -54,6 +55,7 @@ examples/              written for the HLK-W801-KIT-V1.1 (see "Board" below)
   uart_printf/         printf on UART0, reads keys, changes the CPU clock on the fly
   dma/                 DMA memory copy (timed against memcpy) and UART output by DMA
   timer/               1 ms and 250 ms timer interrupts, timer_delay_ms() checked against them
+  pwm/                 PWM rate table, counted pulses on LED2, LED1 fading
   crypto/              self-test of every crypto algorithm against standard test vectors, with speeds
   spi/                 SPI loopback self-test (one wire PA7-PB3): lengths, modes, clocks, throughput
   rtc/                 RTC self-test (rollovers, leap years, alarm, clock accuracy), then a clock on the console
@@ -335,13 +337,14 @@ header, each with a short usage example and the points to watch.
 | SPI master | manual ch. 14 and wm_iot_sdk HAL; `examples/spi` (loopback) passes on hardware, FIFO and DMA. At 20 MHz: FIFO copy ~1530 KB/s, DMA ~2100 KB/s (wire limit 2500 KB/s) |
 | SD card (SPI) + FatFs | `examples/sd_fatfs` passes on hardware with two SDHC cards (32 GB and 16 GB, FAT32) at 20 MHz: raw read 820-1180 KB/s; through FatFs ~350-430 KB/s write, ~530 KB/s read. With `SDCARD_SPI_DMA=1` (32 GB card): 464 KB/s write, 593 KB/s read |
 | SD card (SDIO) | `sdcard_sdio.c` / `w80x_sdh.h` from manual ch. 13 and wm_sdk_w80x's wm_sdio_host.c; builds, not yet run on hardware |
+| PWM | `w80x_pwm.h` from manual ch. 23 and both vendor SDKs; `examples/pwm` run on the HLK kit (rates, one-shot counts, interrupt); center-aligned, pairs, brake not yet tested |
 | Crypto / RSA | tested on hardware: `examples/crypto` passes every algorithm against standard vectors, including RSA-1024 and RSA-2048 |
 | Image packer | verified byte-exact against vendor output |
 | Flasher | used for every hardware test so far |
 | Startup, linker, interrupts | tested on hardware; interrupts use the common entry in `startup.S` |
 | Examples | all run on the HLK-W801-KIT-V1.1 |
 
-Planned next: PWM, I2C, PMU/sleep; SPI slave mode.
+Planned next: PWM input capture, I2C, PMU/sleep; SPI slave mode.
 
 ## References
 

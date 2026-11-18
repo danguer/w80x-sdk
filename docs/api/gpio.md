@@ -3,6 +3,7 @@
 [API index](README.md)
 
 - **Source:** [`w80x_gpio.h`](../../w80x/w80x_gpio.h)
+- **Pin functions:** [alternate functions of every pin](../mcu/gpio_af.md)
 - **Examples:** [`examples/blink`](../../examples/blink/main.c), [`examples/button_irq`](../../examples/button_irq/main.c)
 
 ```c
